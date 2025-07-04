@@ -8,11 +8,11 @@ def main():
     # Uncomment this to pass the first stage
     #
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+    c, _ = server_socket.accept()
 
     while True:
-        c, _ = server_socket.accept()
+        bytes, _ =  c.recvfrom(100)
         c.sendall(b"+PONG\r\n")
-
 
 if __name__ == "__main__":
     main()
