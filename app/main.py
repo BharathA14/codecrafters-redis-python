@@ -1,25 +1,33 @@
 import socket
 import threading
 from collections import defaultdict
+import time
 
-def response_gen(decoded_data: list, key_store: dict[str, str]):
+def response_gen(decoded_data: list, key_store: dict[str, list]):
     print(decoded_data)
     command = decoded_data[2].lower()
+
+# I will have to capture the clock and save it along as well
 
     match command:
         case "echo":
             response = (f"{decoded_data[3]}\r\n{decoded_data[4]}\r\n").encode()
 
         case "set":
-            print('set',decoded_data[3], decoded_data[4])
-            key_store[decoded_data[4]] = decoded_data[6]
+            time_out = 0
+            if len(decoded_data) == 12:
+                time_out = time.time()+float(decoded_data[10])/1000
+            key_store[decoded_data[4]] = [decoded_data[6], time_out]
             response = "+OK\r\n".encode()
 
+
         case "get":
-            if decoded_data[4] in key_store:
-                value = key_store.get(decoded_data[4])
+            if decoded_data[4] in key_store and (key_store[decoded_data[4]][1] == 0 or (key_store[decoded_data[4]][1] >= time.time())):
+                print(key_store[decoded_data[4]][1], time.time())
+                value = key_store[decoded_data[4]][0] 
                 response = (f"${len(value)}\r\n{value}\r\n").encode()
             else:
+                print("entered")
                 response = "$-1\r\n".encode()
         case _:
             response = ("+PONG\r\n").encode()
