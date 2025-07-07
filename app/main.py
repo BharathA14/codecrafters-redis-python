@@ -2,12 +2,13 @@ import socket
 import threading
 from collections import defaultdict
 import time
+import argparse
 
-def response_gen(decoded_data: list, key_store: dict[str, list]):
+parser = argparse.ArgumentParser()
+
+def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str, str]):
     print(decoded_data)
     command = decoded_data[2].lower()
-
-# I will have to capture the clock and save it along as well
 
     match command:
         case "echo":
@@ -29,12 +30,28 @@ def response_gen(decoded_data: list, key_store: dict[str, list]):
             else:
                 print("entered")
                 response = "$-1\r\n".encode()
+
+        case "config":
+            match decoded_data[6]:
+                case "dir":
+                    response = generate_op_string([decoded_data[6], args.dir]).encode() # type: ignore
+                case "dbfilename":
+                    response = generate_op_string([decoded_data[6], args.dbfilename]).encode() # type: ignore
+
         case _:
             response = ("+PONG\r\n").encode()
     return response
 
 
-def handle_request(client_socket: socket.socket, key_store: defaultdict):
+def generate_op_string(data:list)-> str:
+    n = len(data)
+    response=[f"*{n}\r\n"]
+    for i in data:
+        response.append(f"${len(i)}\r\n{i}\r\n")
+    print(response)
+    return ''.join(response)
+
+def handle_request(client_socket: socket.socket, key_store: defaultdict, args: dict):
     try:
         while True:
             data = client_socket.recv(2048)
@@ -42,14 +59,14 @@ def handle_request(client_socket: socket.socket, key_store: defaultdict):
                 break
             decoded = data.decode().split("\r\n")
 
-            response = response_gen(decoded, key_store)
+            response = response_gen(decoded, key_store, args)
             client_socket.sendall(response)
 
     except Exception as e:
         print("exception: ", e)
 
 
-def main():
+def main(args):
     # You can use print statements as follows for debugging, they'll be visible when running tests.
     # print("Logs from your program will appear here!")
 
@@ -62,7 +79,10 @@ def main():
     while True:
         #print("New conn")
         c, _ = server_socket.accept()
-        threading.Thread(target=handle_request, args=(c,keystore,)).start()
+        threading.Thread(target=handle_request, args=(c,keystore,args,)).start()
 
 if __name__ == "__main__":
-    main()
+    parser.add_argument("--dir")
+    parser.add_argument("--dbfilename")
+    args = parser.parse_args()
+    main(args)
