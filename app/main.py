@@ -7,6 +7,9 @@ import app.rdb_parser as rdb_parser
 import re
 
 parser = argparse.ArgumentParser()
+master_host = ""
+master_host_port = ""
+replica = False
 
 def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str, str]):
     print(decoded_data)
@@ -54,6 +57,7 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
 
         case _:
             response = ("+PONG\r\n").encode()
+
     return response
 
 def encode_bulk_string(i: str):
@@ -81,17 +85,31 @@ def handle_request(client_socket: socket.socket, key_store: defaultdict, args: d
     except Exception as e:
         print("exception: ", e)
 
+def parse_master_config(config: str):
+    print(config)
+    global master_host, master_host_port
+    if config != "":
+        master_host, master_host_port = config.split(" ")
+        master_host_port = int(master_host_port)
+
+def is_replica():
+    return master_host != ""
+
+def ping_master():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((master_host, int(master_host_port)))
+    s.sendall(generate_op_string(["PING"]).encode())
 
 def main(args):
-    # You can use print statements as follows for debugging, they'll be visible when running tests.
-    # print("Logs from your program will appear here!")
-
-    # Uncomment this to pass the first stage
-    #
+    
     server_socket = socket.create_server(("localhost", int(args.port)), reuse_port=True)
     keystore = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
-    # print(keystore)
-    #print("Server started")
+    parse_master_config(args.replicaof)
+
+    if is_replica():
+        print("true")
+        ping_master()
+
 
     while True:
         #print("New conn")
