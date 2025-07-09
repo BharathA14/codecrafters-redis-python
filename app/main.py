@@ -80,7 +80,7 @@ def main(args):
 
     # Uncomment this to pass the first stage
     #
-    server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
+    server_socket = socket.create_server(("localhost", args.port), reuse_port=True)
     keystore = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
     # print(keystore)
     #print("Server started")
@@ -93,5 +93,6 @@ def main(args):
 if __name__ == "__main__":
     parser.add_argument("--dir")
     parser.add_argument("--dbfilename")
+    parser.add_argument("--port")
     args = parser.parse_args()
     main(args)
