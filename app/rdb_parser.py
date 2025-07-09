@@ -30,9 +30,11 @@ def read_file_and_construct_kvm(file_dir:str, file_name: str) -> dict[str, any]:
                     if expiry_type =="s":
                         expiry_value *= 1000 # type: ignore
                     entry.append(expiry_value)
+                else:
+                    entry.append(0) # type: ignore
 
                 rdb_dict[key.decode()] = entry
-        # print(rdb_dict)
+        print(rdb_dict)
         return rdb_dict
     except Exception as e:
         print(e)
