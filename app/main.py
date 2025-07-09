@@ -3,6 +3,8 @@ import threading
 from collections import defaultdict
 import time
 import argparse
+import app.rdb_parser as rdb_parser
+import re
 
 parser = argparse.ArgumentParser()
 
@@ -21,14 +23,12 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
             key_store[decoded_data[4]] = [decoded_data[6], time_out]
             response = "+OK\r\n".encode()
 
-
         case "get":
             if decoded_data[4] in key_store and (key_store[decoded_data[4]][1] == 0 or (key_store[decoded_data[4]][1] >= time.time())):
                 print(key_store[decoded_data[4]][1], time.time())
                 value = key_store[decoded_data[4]][0] 
                 response = (f"${len(value)}\r\n{value}\r\n").encode()
             else:
-                print("entered")
                 response = "$-1\r\n".encode()
 
         case "config":
@@ -38,6 +38,14 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
                 case "dbfilename":
                     response = generate_op_string([decoded_data[6], args.dbfilename]).encode() # type: ignore
 
+        case "keys":
+            matching_keys = []
+            pattern = re.escape("*")
+            for i in list(key_store.keys()):
+                if re.search(pattern,decoded_data[4]):
+                    matching_keys.append(i)
+            return generate_op_string(matching_keys).encode()
+        
         case _:
             response = ("+PONG\r\n").encode()
     return response
@@ -73,7 +81,8 @@ def main(args):
     # Uncomment this to pass the first stage
     #
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
-    keystore = defaultdict(int)
+    keystore = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
+    # print(keystore)
     #print("Server started")
 
     while True:
