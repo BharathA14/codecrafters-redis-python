@@ -47,8 +47,11 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
             return generate_op_string(matching_keys).encode()
         
         case "info":
-            response = encode_bulk_string("{role:master}").encode()
-            
+            if args.replicaof == "": # type: ignore
+                response = encode_bulk_string("{role:master}").encode()
+            else:
+                response = encode_bulk_string("{role:slave}").encode()
+
         case _:
             response = ("+PONG\r\n").encode()
     return response
@@ -99,5 +102,6 @@ if __name__ == "__main__":
     parser.add_argument("--dir")
     parser.add_argument("--dbfilename")
     parser.add_argument("--port", default=6379)
+    parser.add_argument("--replicaof", default = "")
     args = parser.parse_args()
     main(args)
