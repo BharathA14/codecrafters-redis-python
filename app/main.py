@@ -46,11 +46,16 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
                     matching_keys.append(i)
             return generate_op_string(matching_keys).encode()
         
+        case "info":
+            response = encode_bulk_string("{role:master}").encode()
+            
         case _:
             response = ("+PONG\r\n").encode()
     return response
 
-
+def encode_bulk_string(i: str):
+    return f"${len(i)}\r\n{i}\r\n"
+    
 def generate_op_string(data:list)-> str:
     n = len(data)
     response=[f"*{n}\r\n"]
