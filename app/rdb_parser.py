@@ -27,7 +27,7 @@ def read_file_and_construct_kvm(file_dir:str, file_name: str) -> dict[str, any]:
                 entry =  [val.decode()]
 
                 if expiry_type:
-                    print(expiry_type)
+                    # print(expiry_type)
                     if expiry_type =="ms":
                         expiry_value /= 1000 # type: ignore
                     entry.append(expiry_value)

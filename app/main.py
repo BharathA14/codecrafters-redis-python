@@ -48,7 +48,7 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
         
         case "info":
             if args.replicaof == "": # type: ignore
-                response = encode_bulk_string("{role:master}").encode()
+                response = encode_bulk_string("{role:master,master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb,master_repl_offset:0}").encode()
             else:
                 response = encode_bulk_string("{role:slave}").encode()
 
