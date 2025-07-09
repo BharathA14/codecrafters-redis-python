@@ -80,7 +80,7 @@ def main(args):
 
     # Uncomment this to pass the first stage
     #
-    server_socket = socket.create_server(("localhost", args.port), reuse_port=True)
+    server_socket = socket.create_server(("localhost", int(args.port)), reuse_port=True)
     keystore = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
     # print(keystore)
     #print("Server started")
