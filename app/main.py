@@ -89,6 +89,8 @@ def response_gen(
                     + master_replication_offset
                 ).encode(),
             )
+            print(rdb_parser.send_rdb_file())
+            add_wait_to_send_message(client_socket, rdb_parser.send_rdb_file())
         case _:
             client_socket.sendall(("+PONG\r\n").encode())
 

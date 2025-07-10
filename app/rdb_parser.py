@@ -1,13 +1,19 @@
+global_file_dir = ""
+global_file_name =""
 
 def read_file_and_construct_kvm(file_dir:str, file_name: str) -> dict[str, any]: # type: ignore
     rdb_dict = {}
-    
+
+    global global_file_dir, global_file_name
+    global_file_dir = file_dir
+    global_file_name = file_name
     try:
         with open(file_dir+"/"+file_name, "rb") as f:
             buf = f.read()
             print("buffer: ", str(buf))
             pos = 9  # Skip "REDIS0011" header
             while buf[pos] != 0xFE:
+                # print(buf[pos])
                 pos += 1
             pos += 5
 
@@ -40,9 +46,6 @@ def read_file_and_construct_kvm(file_dir:str, file_name: str) -> dict[str, any]:
     except Exception as e:
         print(e)
         return {}
-
-
-
 
 def read_length(buf, pos):
     """Read Redis-style length-encoded field starting at pos"""
@@ -87,3 +90,9 @@ def read_expiry(buf, pos) -> tuple:
         return "s", expiry_value, pos + 5
     else:
         return None, None, pos  # No expiry
+    
+def send_rdb_file() -> bytes: 
+    with open(global_file_dir+"/"+global_file_name, "rb") as f:
+        buf = f.read()
+        header = f"${len(buf)}\r\n".encode()
+        return header + buf
