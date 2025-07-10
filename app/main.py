@@ -10,6 +10,8 @@ parser = argparse.ArgumentParser()
 master_host = ""
 master_host_port = ""
 replica = False
+master_replication_id = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+master_replication_offset = "0"
 
 def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str, str]):
     print(decoded_data)
@@ -51,18 +53,24 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
         
         case "info":
             if args.replicaof == "": # type: ignore
-                response = encode_bulk_string("{role:master,master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb,master_repl_offset:0}").encode()
+                response = generate_bulk_string("{"+"role:master,master_replid:"+ master_replication_id +",master_repl_offset:"+"0"+"}").encode()
             else:
-                response = encode_bulk_string("{role:slave}").encode()
+                response = generate_bulk_string("{role:slave}").encode()
 
         case "replconf":
             response = ("+OK\r\n").encode()
+
+        case "psync":
+            response = generate_bulk_string("FULLRESYNC "+master_replication_id+" "+master_replication_offset).encode()
         case _:
             response = ("+PONG\r\n").encode()
 
     return response
 
-def encode_bulk_string(i: str):
+
+
+
+def generate_bulk_string(i: str):
     return f"${len(i)}\r\n{i}\r\n"
     
 def generate_resp_array(data:list)-> str:
