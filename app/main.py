@@ -96,20 +96,24 @@ def parse_master_config(config: str):
 def is_replica():
     return master_host != ""
 
+def add_wait_to_send_message(s:socket.socket, message: bytes):
+    s.sendall(message)
+    time.sleep(0.1)
+
 def ping_master(s: socket.socket):
-    s.send(generate_resp_array(["PING"]).encode())
-    time.sleep(0.1)
+    add_wait_to_send_message(s,generate_resp_array(["PING"]).encode())
     
-
 def ping_master_for_repl_conf(s: socket.socket, port: str):
-    s.send(generate_resp_array(["REPLCONF", "listening-port", port]).encode())
-    time.sleep(0.1)
-    s.send(generate_resp_array(["REPLCONF", "capa", "psync2"]).encode())
+    add_wait_to_send_message(s, generate_resp_array(["REPLCONF", "listening-port", port]).encode())
+    add_wait_to_send_message(s, generate_resp_array(["REPLCONF", "capa", "psync2"]).encode())
 
+def ping_master_for_sync(s:socket.socket):
+    add_wait_to_send_message(s, generate_resp_array(["PSYNC", "?", "-1"]).encode())
 
 def handshake_with_master(s: socket.socket, port: str):
     ping_master(s)
     ping_master_for_repl_conf(s, port)
+    ping_master_for_sync(s)
 
 
 def main(args):
