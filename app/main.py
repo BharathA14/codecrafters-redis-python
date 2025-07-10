@@ -37,9 +37,9 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
         case "config":
             match decoded_data[6]:
                 case "dir":
-                    response = generate_op_string([decoded_data[6], args.dir]).encode() # type: ignore
+                    response = generate_resp_array([decoded_data[6], args.dir]).encode() # type: ignore
                 case "dbfilename":
-                    response = generate_op_string([decoded_data[6], args.dbfilename]).encode() # type: ignore
+                    response = generate_resp_array([decoded_data[6], args.dbfilename]).encode() # type: ignore
 
         case "keys":
             matching_keys = []
@@ -47,7 +47,7 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
             for i in list(key_store.keys()):
                 if re.search(pattern,decoded_data[4]):
                     matching_keys.append(i)
-            return generate_op_string(matching_keys).encode()
+            return generate_resp_array(matching_keys).encode()
         
         case "info":
             if args.replicaof == "": # type: ignore
@@ -55,6 +55,8 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
             else:
                 response = encode_bulk_string("{role:slave}").encode()
 
+        case "replconf":
+            response = ("+OK\r\n").encode()
         case _:
             response = ("+PONG\r\n").encode()
 
@@ -63,7 +65,7 @@ def response_gen(decoded_data: list, key_store: dict[str, list], args: dict[str,
 def encode_bulk_string(i: str):
     return f"${len(i)}\r\n{i}\r\n"
     
-def generate_op_string(data:list)-> str:
+def generate_resp_array(data:list)-> str:
     n = len(data)
     response=[f"*{n}\r\n"]
     for i in data:
@@ -86,7 +88,6 @@ def handle_request(client_socket: socket.socket, key_store: defaultdict, args: d
         print("exception: ", e)
 
 def parse_master_config(config: str):
-    print(config)
     global master_host, master_host_port
     if config != "":
         master_host, master_host_port = config.split(" ")
@@ -95,24 +96,37 @@ def parse_master_config(config: str):
 def is_replica():
     return master_host != ""
 
-def ping_master():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((master_host, int(master_host_port)))
-    s.sendall(generate_op_string(["PING"]).encode())
+def ping_master(s: socket.socket):
+    s.send(generate_resp_array(["PING"]).encode())
+    time.sleep(0.1)
+    
+
+def ping_master_for_repl_conf(s: socket.socket, port: str):
+    s.send(generate_resp_array(["REPLCONF", "listening-port", port]).encode())
+    time.sleep(0.1)
+    s.send(generate_resp_array(["REPLCONF", "capa", "psync2"]).encode())
+
+
+def handshake_with_master(s: socket.socket, port: str):
+    ping_master(s)
+    ping_master_for_repl_conf(s, port)
+
 
 def main(args):
     
     server_socket = socket.create_server(("localhost", int(args.port)), reuse_port=True)
+
     keystore = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
     parse_master_config(args.replicaof)
 
     if is_replica():
-        print("true")
-        ping_master()
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        s.connect((master_host, int(master_host_port)))
+        handshake_with_master(s, args.port)
 
 
     while True:
-        #print("New conn")
         c, _ = server_socket.accept()
         threading.Thread(target=handle_request, args=(c,keystore,args,)).start()
 
