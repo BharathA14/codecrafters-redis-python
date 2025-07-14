@@ -133,6 +133,7 @@ def handle_request(client_socket: socket.socket, key_store: defaultdict, args: d
             data = client_socket.recv(2048)
             if not data:
                 break
+            print("decoded data:", data.decode())
             decoded = data.decode().split("\r\n")
 
             response_gen(client_socket, data, decoded, key_store, args)
