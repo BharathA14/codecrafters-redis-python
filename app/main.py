@@ -9,7 +9,7 @@ import re
 parser = argparse.ArgumentParser()
 master_host = ""
 master_host_port = ""
-replica = False
+replicas = set()
 master_connection_socket = None
 master_replication_id = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 master_replication_offset = "0"
@@ -17,6 +17,7 @@ master_replication_offset = "0"
 
 def response_gen(
     client_socket: socket.socket,
+    raw_command: bytes,
     decoded_data: list,
     key_store: dict[str, list],
     args: dict[str, str],
@@ -32,19 +33,26 @@ def response_gen(
 
         case "set":
             time_out = 0
+            key = decoded_data[4]
+            value = decoded_data[6]
+
             if len(decoded_data) == 12:
                 time_out = time.time() + float(decoded_data[10]) / 1000
-            key_store[decoded_data[4]] = [decoded_data[6], time_out]
-            if is_replica() and client_socket == master_connection_socket:
-                print("master set command")
-            client_socket.sendall("+OK\r\n".encode())
+            key_store[key] = [value, time_out]
+
+            if not is_replica():
+                handle_replica_set(raw_command)
+                client_socket.sendall("+OK\r\n".encode())
+            else:
+                if client_socket != master_connection_socket:
+                    client_socket.sendall("+OK\r\n".encode())
 
         case "get":
             if decoded_data[4] in key_store and (
                 key_store[decoded_data[4]][1] == 0
                 or (key_store[decoded_data[4]][1] >= time.time())
             ):
-                print(key_store[decoded_data[4]][1], time.time())
+                # print(key_store[decoded_data[4]][1], time.time())
                 value = key_store[decoded_data[4]][0]
                 client_socket.sendall(f"${len(value)}\r\n{value}\r\n".encode())
             else:
@@ -80,6 +88,7 @@ def response_gen(
             client_socket.sendall(response)
 
         case "replconf":
+            replicas.add(client_socket)
             client_socket.sendall(("+OK\r\n").encode())
 
         case "psync":
@@ -96,6 +105,13 @@ def response_gen(
             add_wait_to_send_message(client_socket, rdb_parser.send_rdb_file())
         case _:
             client_socket.sendall(("+PONG\r\n").encode())
+
+
+def handle_replica_set(command: bytes):
+    # print("handle replica set")
+
+    for replica in replicas:
+        add_wait_to_send_message(replica, command)
 
 
 def generate_bulk_string(i: str):
@@ -119,7 +135,7 @@ def handle_request(client_socket: socket.socket, key_store: defaultdict, args: d
                 break
             decoded = data.decode().split("\r\n")
 
-            response_gen(client_socket, decoded, key_store, args)
+            response_gen(client_socket, data, decoded, key_store, args)
 
     except Exception as e:
         print("exception: ", e)
@@ -133,6 +149,7 @@ def parse_master_config(config: str):
 
 
 def is_replica():
+    # print("master_host",master_host)
     return master_host != ""
 
 
