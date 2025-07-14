@@ -10,6 +10,7 @@ parser = argparse.ArgumentParser()
 master_host = ""
 master_host_port = ""
 replica = False
+master_connection_socket = None
 master_replication_id = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 master_replication_offset = "0"
 
@@ -34,6 +35,8 @@ def response_gen(
             if len(decoded_data) == 12:
                 time_out = time.time() + float(decoded_data[10]) / 1000
             key_store[decoded_data[4]] = [decoded_data[6], time_out]
+            if is_replica() and client_socket == master_connection_socket:
+                print("master set command")
             client_socket.sendall("+OK\r\n".encode())
 
         case "get":
@@ -172,6 +175,10 @@ def main(args):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         s.connect((master_host, int(master_host_port)))
+
+        global master_connection_socket
+        master_connection_socket = s
+
         handshake_with_master(s, args.port)
 
     while True:
