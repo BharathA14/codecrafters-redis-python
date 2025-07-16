@@ -9,7 +9,7 @@ import re
 parser = argparse.ArgumentParser()
 master_host = ""
 master_host_port = ""
-replicas = set()
+replica_connections = list()
 master_connection_socket = None
 master_replication_id = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 master_replication_offset = "0"
@@ -21,8 +21,9 @@ def response_gen(
     decoded_data: list,
     key_store: dict[str, list],
     args: dict[str, str],
+    client_addr: str
 ):
-    print(decoded_data)
+    print("decoded in response gen:", decoded_data)
     command = decoded_data[2].lower()
 
     match command:
@@ -88,7 +89,20 @@ def response_gen(
             client_socket.sendall(response)
 
         case "replconf":
-            replicas.add(client_socket)
+            if decoded_data[4].lower() == "listening-port":
+                try:
+                    replica_port = int(decoded_data[6])
+                    print(f"Replica reported listening on port {replica_port}. Connecting...")
+
+                    propagation_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    propagation_socket.connect((client_addr, replica_port))
+                    
+                    replica_connections.append(propagation_socket)
+                    print(f"Successfully connected to replica at {client_addr}:{replica_port}. Connection stored.")
+
+                except Exception as e:
+                    print(f"Failed to connect to replica at {client_addr}:{replica_port}. Error: {e}")
+
             client_socket.sendall(("+OK\r\n").encode())
 
         case "psync":
@@ -108,10 +122,20 @@ def response_gen(
 
 
 def handle_replica_set(command: bytes):
-    # print("handle replica set")
+    global replica_connections
+    print(f"Propagating command to {len(replica_connections)} replica(s)...")
+    
+    failed_connections = []
 
-    for replica in replicas:
-        add_wait_to_send_message(replica, command)
+    for replica_socket in replica_connections:
+        try:
+            replica_socket.sendall(command)
+        except (BrokenPipeError, OSError) as e:
+            print(f"Failed to propagate to replica {replica_socket.getpeername()}. Error: {e}. Removing connection.")
+            failed_connections.append(replica_socket)
+
+    if failed_connections:
+        replica_connections = [conn for conn in replica_connections if conn not in failed_connections]
 
 
 def generate_bulk_string(i: str):
@@ -127,7 +151,7 @@ def generate_resp_array(data: list) -> str:
     return "".join(response)
 
 
-def handle_request(client_socket: socket.socket, key_store: defaultdict, args: dict):
+def handle_request(client_socket: socket.socket, key_store: defaultdict, args: dict, client_addr: str):
     try:
         while True:
             data = client_socket.recv(2048)
@@ -136,7 +160,7 @@ def handle_request(client_socket: socket.socket, key_store: defaultdict, args: d
             print("decoded data:", data.decode())
             decoded = data.decode().split("\r\n")
 
-            response_gen(client_socket, data, decoded, key_store, args)
+            response_gen(client_socket, data, decoded, key_store, args, client_addr)
 
     except Exception as e:
         print("exception: ", e)
@@ -185,7 +209,6 @@ def handshake_with_master(s: socket.socket, port: str):
 def main(args):
 
     server_socket = socket.create_server(("localhost", int(args.port)), reuse_port=True)
-
     keystore = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
     parse_master_config(args.replicaof)
 
@@ -200,13 +223,14 @@ def main(args):
         handshake_with_master(s, args.port)
 
     while True:
-        c, _ = server_socket.accept()
+        c, (conn_host, _)= server_socket.accept()
         threading.Thread(
             target=handle_request,
             args=(
                 c,
                 keystore,
                 args,
+                conn_host
             ),
         ).start()
 
