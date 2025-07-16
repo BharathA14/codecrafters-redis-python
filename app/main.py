@@ -5,6 +5,8 @@ import datetime
 import argparse
 from typing import Any, Dict, Optional, cast, List
 
+from app import rdb_parser
+
 EMPTY_RDB = bytes.fromhex(
     "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
 )
@@ -152,6 +154,8 @@ master_repl_offset:{replication.master_repl_offset}
 
 
 def main(args: Args):
+    global db
+    db = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
     server_socket = socket.create_server(
         ("localhost", args.port),
         reuse_port=True,
@@ -215,4 +219,6 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser()
     args.add_argument("--port", type=int, default=6379)
     args.add_argument("--replicaof", required=False)
+    args.add_argument("--dir", default=".")
+    args.add_argument("--dbfilename", default="empty.rdb")
     main(cast(Args, args.parse_args()))
