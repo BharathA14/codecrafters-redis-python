@@ -88,7 +88,6 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
             case [b"ECHO", s]:
                 conn.send(encode_resp(s))
             case [b"SET", k, v]:
-                print(k, v)
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 db[k] = rdb_parser.Value(
@@ -134,6 +133,8 @@ master_repl_offset:{replication.master_repl_offset}
                 conn.send(encode_resp("OK"))
             case [b"REPLCONF", b"capa", b"psync2"]:
                 conn.send(encode_resp("OK"))
+            case [b"REPLCONF", b"GETACK", b"*"]:
+                conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
             case [b"PSYNC", replid, offset]:
                 conn.send(
                     encode_resp(
@@ -151,7 +152,6 @@ master_repl_offset:{replication.master_repl_offset}
 def main(args: Args):
     global db
     db = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
-    print(db)
     server_socket = socket.create_server(
         ("localhost", args.port),
         reuse_port=True,
