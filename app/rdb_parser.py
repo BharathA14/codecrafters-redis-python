@@ -1,9 +1,15 @@
-from typing import Dict, Any
-
-from app.main import Value
+from typing import Any, Dict, Optional
+import datetime
+import dataclasses
 
 global_file_dir = "" # do we need this
 global_file_name =""
+
+@dataclasses.dataclass
+class Value:
+    value: Any
+    expiry: Optional[datetime.datetime]
+
 
 def read_file_and_construct_kvm(file_dir:str, file_name: str) -> Dict[Any, Value]: 
     rdb_dict = {}
@@ -33,7 +39,7 @@ def read_file_and_construct_kvm(file_dir:str, file_name: str) -> Dict[Any, Value
                 key, pos = read_string(buf, pos)
                 val, pos = read_string(buf, pos)
 
-                entry =  Value(value=val.decode(), expiry=0)
+                entry =  Value(value=val.decode(), expiry=None)
 
                 if expiry_type:
                     # print(expiry_type)

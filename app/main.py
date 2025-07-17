@@ -19,7 +19,6 @@ class Args:
 
 
 def parse_next(data: bytes):
-    print("data: ",data.decode()," :end")
     first, data = data.split(b"\r\n", 1)
     match first[:1]:
         case b"*":
@@ -62,13 +61,7 @@ def encode_resp(data: Any, trailing_crlf: bool = True) -> bytes:
     raise RuntimeError(f"Encode not implemented: {data}")
 
 
-@dataclasses.dataclass
-class Value:
-    value: Any
-    expiry: Optional[datetime.datetime]
-
-
-db: Dict[Any, Value] = {}
+db: Dict[Any, rdb_parser.Value] = {}
 
 
 @dataclasses.dataclass
@@ -95,9 +88,10 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
             case [b"ECHO", s]:
                 conn.send(encode_resp(s))
             case [b"SET", k, v]:
+                print(k, v)
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
-                db[k] = Value(
+                db[k] = rdb_parser.Value(
                     value=v,
                     expiry=None,
                 )
@@ -110,7 +104,7 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
                 expiry_ms = datetime.timedelta(
                     milliseconds=int(expiry_ms.decode()),
                 )
-                db[k] = Value(
+                db[k] = rdb_parser.Value(
                     value=v,
                     expiry=now + expiry_ms,
                 )
