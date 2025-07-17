@@ -82,6 +82,7 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
     while data or (data := conn.recv(4096)):
         value, data = parse_next(data)
+        print("handle: ", value, data)
         match value:
             case [b"PING"]:
                 conn.send(encode_resp("PONG"))
