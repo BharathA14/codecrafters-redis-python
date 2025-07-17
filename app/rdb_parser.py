@@ -1,7 +1,11 @@
-global_file_dir = ""
+from typing import Dict, Any
+
+from app.main import Value
+
+global_file_dir = "" # do we need this
 global_file_name =""
 
-def read_file_and_construct_kvm(file_dir:str, file_name: str) -> dict[str, any]: # type: ignore
+def read_file_and_construct_kvm(file_dir:str, file_name: str) -> Dict[Any, Value]: 
     rdb_dict = {}
 
     global global_file_dir, global_file_name
@@ -10,7 +14,6 @@ def read_file_and_construct_kvm(file_dir:str, file_name: str) -> dict[str, any]:
     try:
         with open(file_dir+"/"+file_name, "rb") as f:
             buf = f.read()
-            print("buffer: ", str(buf))
             pos = 9  # Skip "REDIS0011" header
             while buf[pos] != 0xFE:
                 # print(buf[pos])
@@ -30,18 +33,15 @@ def read_file_and_construct_kvm(file_dir:str, file_name: str) -> dict[str, any]:
                 key, pos = read_string(buf, pos)
                 val, pos = read_string(buf, pos)
 
-                entry =  [val.decode()]
+                entry =  Value(value=val.decode(), expiry=0)
 
                 if expiry_type:
                     # print(expiry_type)
                     if expiry_type =="ms":
                         expiry_value /= 1000 # type: ignore
-                    entry.append(expiry_value)
-                else:
-                    entry.append(0) # type: ignore
-
+                    entry.expiry = expiry_value
+            
                 rdb_dict[key.decode()] = entry
-        print(rdb_dict)
         return rdb_dict
     except Exception as e:
         print(e)

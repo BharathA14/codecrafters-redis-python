@@ -19,6 +19,7 @@ class Args:
 
 
 def parse_next(data: bytes):
+    print("data: ",data.decode()," :end")
     first, data = data.split(b"\r\n", 1)
     match first[:1]:
         case b"*":
@@ -156,6 +157,7 @@ master_repl_offset:{replication.master_repl_offset}
 def main(args: Args):
     global db
     db = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
+    print(db)
     server_socket = socket.create_server(
         ("localhost", args.port),
         reuse_port=True,
