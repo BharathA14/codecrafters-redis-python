@@ -91,6 +91,7 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
         print("handle: ", value, data)
         handle_command(value, conn, is_replica_conn)
 
+
 def handle_command(value: List, conn: socket.socket, is_replica_conn: bool = False):
     global multi_enabled, transactions
     match value:
@@ -145,10 +146,12 @@ master_repl_offset:{replication.master_repl_offset}
             if not multi_enabled:
                 conn.send(encode_resp("-ERR EXEC without MULTI"))
             else:
-                # if len(transactions) == 0:
-                conn.send(encode_resp([]))
-                # for command in transactions:
                 multi_enabled = False
+                if len(transactions) == 0:
+                    conn.send(encode_resp([]))
+                for command in transactions:
+                    handle_command(command, conn, is_replica_conn)
+
         case [b'INCR', k]:
             if not handle_transaction(value, conn):
                 db_value = db.get(k)
@@ -169,8 +172,6 @@ master_repl_offset:{replication.master_repl_offset}
                 )
 
                 conn.send(encode_resp(new_value))
-            else:
-                conn.send(encode_resp("QUEUED"))
         case [b"SET", k, v, b"px", expiry_ms]:
             if not handle_transaction(value, conn):
                 for rep in replication.connected_replicas:
@@ -185,8 +186,6 @@ master_repl_offset:{replication.master_repl_offset}
                 )
                 if not is_replica_conn:
                     conn.send(encode_resp("OK"))
-            else:
-                conn.send(encode_resp("QUEUED"))    
         case [b"SET", k, v]:
             if not handle_transaction(value, conn):
                 for rep in replication.connected_replicas:
@@ -197,8 +196,6 @@ master_repl_offset:{replication.master_repl_offset}
                 )
                 if not is_replica_conn:
                     conn.send(encode_resp("OK"))
-            else:
-                conn.send(encode_resp("QUEUED"))
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
