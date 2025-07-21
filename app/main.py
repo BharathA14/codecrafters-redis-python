@@ -162,14 +162,16 @@ master_repl_offset:{replication.master_repl_offset}
                     try:
                         current_int = int(db_value.value.decode())
                         new_value = current_int + 1
-                    
-                        db[k] = rdb_parser.Value(
-                            value=str(new_value).encode(),
-                            expiry=None,
-                        )
-                        conn.send(encode_resp(new_value))
                     except Exception:
                         conn.send(encode_resp("-ERR value is not an integer or out of range"))
+                        continue
+                
+                db[k] = rdb_parser.Value(
+                    value=str(new_value).encode(),
+                    expiry=None,
+                )
+                
+                conn.send(encode_resp(new_value))
 
             case _:
                 raise RuntimeError(f"Command not implemented: {value}")
