@@ -169,6 +169,8 @@ master_repl_offset:{replication.master_repl_offset}
                 )
 
                 conn.send(encode_resp(new_value))
+            else:
+                conn.send(encode_resp("QUEUED"))
         case [b"SET", k, v, b"px", expiry_ms]:
             if not handle_transaction(value, conn):
                 for rep in replication.connected_replicas:
@@ -183,7 +185,8 @@ master_repl_offset:{replication.master_repl_offset}
                 )
                 if not is_replica_conn:
                     conn.send(encode_resp("OK"))
-
+            else:
+                conn.send(encode_resp("QUEUED"))    
         case [b"SET", k, v]:
             if not handle_transaction(value, conn):
                 for rep in replication.connected_replicas:
@@ -194,6 +197,8 @@ master_repl_offset:{replication.master_repl_offset}
                 )
                 if not is_replica_conn:
                     conn.send(encode_resp("OK"))
+            else:
+                conn.send(encode_resp("QUEUED"))
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
