@@ -50,6 +50,8 @@ def encode_resp(data: Any, trailing_crlf: bool = True) -> bytes:
         )
     if isinstance(data, str):
         return b"+%b\r\n" % (data.encode(),)
+    if isinstance(data, int):
+        return b":%b\r\n" % (str(data).encode())
     if data is None:
         return b"$-1\r\n"
     if isinstance(data, list):
@@ -150,8 +152,20 @@ master_repl_offset:{replication.master_repl_offset}
                 # print('sent')
             case [b"REPLCONF", b"GETACK", b"*"]:
                 conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
+            case [b'INCR', k]:
+                db_value = db.get(k)
+                if db_value is None:
+                    new_value = 1
+                else:
+                    current_int = int(db_value.value.decode())
+                    new_value = current_int + 1
+                
+                db[k] = rdb_parser.Value(
+                    value=str(new_value).encode(),
+                    expiry=None,
+                )
+                conn.send(encode_resp(new_value))
             case _:
-                print('ent')
                 raise RuntimeError(f"Command not implemented: {value}")
 
 
@@ -179,7 +193,7 @@ def main(args: Args):
                     b"listening-port",
                     str(args.port).encode(),
                 ]
-            )
+            )   
         )
         resp, _ = parse_next(master_conn.recv(4096))
         assert resp == "OK"
