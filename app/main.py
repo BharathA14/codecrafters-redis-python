@@ -86,115 +86,120 @@ replication = Replication(
 
 def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
-    global multi_enabled, transactions
     while data or (data := conn.recv(4096)):
         value, data = parse_next(data)
         print("handle: ", value, data)
-        match value:
-            case [b"PING"]:
-                conn.send(encode_resp("PONG"))
-            case [b"ECHO", s]:
-                conn.send(encode_resp(s))
-            case [b"GET", k]:
-                now = datetime.datetime.now()
-                value = db.get(k)
-                if value is None:
-                    conn.send(encode_resp(None))
-                elif value.expiry is not None and now >= value.expiry:
-                    db.pop(k)
-                    conn.send(encode_resp(None))
-                else:
-                    conn.send(encode_resp(value.value))
-            case [b"INFO", b"replication"]:
-                if args.replicaof is None:
-                    info = f"""\
+        return handle_command(value, data, conn, is_replica_conn)
+
+def handle_command(value: List, data: Any, conn: socket.socket, is_replica_conn: bool = False):
+    global multi_enabled, transactions
+    match value:
+        case [b"PING"]:
+            conn.send(encode_resp("PONG"))
+        case [b"ECHO", s]:
+            conn.send(encode_resp(s))
+        case [b"GET", k]:
+            now = datetime.datetime.now()
+            value = db.get(k)
+            if value is None:
+                conn.send(encode_resp(None))
+            elif value.expiry is not None and now >= value.expiry:
+                db.pop(k)
+                conn.send(encode_resp(None))
+            else:
+                conn.send(encode_resp(value.value))
+        case [b"INFO", b"replication"]:
+            if args.replicaof is None:
+                info = f"""\
 role:master
 master_replid:{replication.master_replid}
 master_repl_offset:{replication.master_repl_offset}
 """.encode()
-                else:
-                    info = b"""role:slave\n"""
-                conn.send(encode_resp(info))
-            case [b"REPLCONF", b"listening-port", port]:
-                conn.send(encode_resp("OK"))
-            case [b"REPLCONF", b"capa", b"psync2"]:
-                conn.send(encode_resp("OK"))
-            case [b"REPLCONF", b"GETACK", b"*"]:
-                conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
-            case [b"PSYNC", replid, offset]:
-                conn.send(
-                    encode_resp(
-                        f"FULLRESYNC "
-                        f"{replication.master_replid} "
-                        f"{replication.master_repl_offset}"
-                    )
+            else:
+                info = b"""role:slave\n"""
+            conn.send(encode_resp(info))
+        case [b"REPLCONF", b"listening-port", port]:
+            conn.send(encode_resp("OK"))
+        case [b"REPLCONF", b"capa", b"psync2"]:
+            conn.send(encode_resp("OK"))
+        case [b"REPLCONF", b"GETACK", b"*"]:
+            conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
+        case [b"PSYNC", replid, offset]:
+            conn.send(
+                encode_resp(
+                    f"FULLRESYNC "
+                    f"{replication.master_replid} "
+                    f"{replication.master_repl_offset}"
                 )
-                conn.send(encode_resp(EMPTY_RDB, trailing_crlf=False))
-                # conn.send(encode_resp(["REPLCONF", "GETACK", "*"]))
-                replication.connected_replicas.append(conn)
-                # print('sent')
-            case [b"REPLCONF", b"GETACK", b"*"]:
-                conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
-            case [b'MULTI']:
-                multi_enabled = True
-                conn.send(encode_resp("OK"))
-            case [b'EXEC']:
-                if not multi_enabled:
-                    conn.send(encode_resp("-ERR EXEC without MULTI"))
-                else:
-                    if len(transactions) == 0:
-                        conn.send(encode_resp([]))
-                    multi_enabled = False
-            case [b'INCR', k]:
-                if handle_transaction():
-                    continue
-                db_value = db.get(k)
-                if db_value is None:
-                    new_value = 1
-                else:
-                    try:
-                        current_int = int(db_value.value.decode())
-                        new_value = current_int + 1
-                    except Exception:
-                        conn.send(encode_resp(
-                            "-ERR value is not an integer or out of range"))
-                        continue
+            )
+            conn.send(encode_resp(EMPTY_RDB, trailing_crlf=False))
+            # conn.send(encode_resp(["REPLCONF", "GETACK", "*"]))
+            replication.connected_replicas.append(conn)
+            # print('sent')
+        case [b"REPLCONF", b"GETACK", b"*"]:
+            conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
+        case [b'MULTI']:
+            multi_enabled = True
+            conn.send(encode_resp("OK"))
+        case [b'EXEC']:
+            if not multi_enabled:
+                conn.send(encode_resp("-ERR EXEC without MULTI"))
+            else:
+                if len(transactions) == 0:
+                    conn.send(encode_resp([]))
+                # for command in transactions:
+                multi_enabled = False
+        case [b'INCR', k]:
+            if handle_transaction():
+                return
+            db_value = db.get(k)
+            if db_value is None:
+                new_value = 1
+            else:
+                try:
+                    current_int = int(db_value.value.decode())
+                    new_value = current_int + 1
+                except Exception:
+                    conn.send(encode_resp(
+                        "-ERR value is not an integer or out of range"))
+                    return
 
-                db[k] = rdb_parser.Value(
-                    value=str(new_value).encode(),
-                    expiry=None,
-                )
+            db[k] = rdb_parser.Value(
+                value=str(new_value).encode(),
+                expiry=None,
+            )
 
-                conn.send(encode_resp(new_value))
-            case [b"SET", k, v, b"px", expiry_ms]:
-                if handle_transaction():
-                    continue
-                for rep in replication.connected_replicas:
-                    rep.send(encode_resp(value))
-                now = datetime.datetime.now()
-                expiry_ms = datetime.timedelta(
-                    milliseconds=int(expiry_ms.decode()),
-                )
-                db[k] = rdb_parser.Value(
-                    value=v,
-                    expiry=now + expiry_ms,
-                )
-                if not is_replica_conn:
-                    conn.send(encode_resp("OK"))
+            conn.send(encode_resp(new_value))
+        case [b"SET", k, v, b"px", expiry_ms]:
+            if handle_transaction():
+                return
+            for rep in replication.connected_replicas:
+                rep.send(encode_resp(value))
+            now = datetime.datetime.now()
+            expiry_ms = datetime.timedelta(
+                milliseconds=int(expiry_ms.decode()),
+            )
+            db[k] = rdb_parser.Value(
+                value=v,
+                expiry=now + expiry_ms,
+            )
+            if not is_replica_conn:
+                conn.send(encode_resp("OK"))
 
-            case [b"SET", k, v]:
-                if handle_transaction():
-                    continue
-                for rep in replication.connected_replicas:
-                    rep.send(encode_resp(value))
-                db[k] = rdb_parser.Value(
-                    value=v,
-                    expiry=None,
-                )
-                if not is_replica_conn:
-                    conn.send(encode_resp("OK"))
-            case _:
-                raise RuntimeError(f"Command not implemented: {value}")
+        case [b"SET", k, v]:
+            if handle_transaction():
+                return
+            for rep in replication.connected_replicas:
+                rep.send(encode_resp(value))
+            db[k] = rdb_parser.Value(
+                value=v,
+                expiry=None,
+            )
+            if not is_replica_conn:
+                conn.send(encode_resp("OK"))
+        case _:
+            raise RuntimeError(f"Command not implemented: {value}")
+
 
 def handle_transaction(command: List, conn: socket.socket):
     global multi_enabled, transactions
@@ -203,6 +208,8 @@ def handle_transaction(command: List, conn: socket.socket):
         conn.send(encode_resp("QUEUED"))
         return True
     return False
+
+
 def main(args: Args):
     global db
     db = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
