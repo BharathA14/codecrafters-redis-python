@@ -11,6 +11,7 @@ EMPTY_RDB = bytes.fromhex(
     "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
 )
 multi_enabled = False
+transactions = []
 
 @dataclasses.dataclass
 class Args:
@@ -84,7 +85,7 @@ replication = Replication(
 
 def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
-    global multi_enabled
+    global multi_enabled, transactions
     while data or (data := conn.recv(4096)):
         value, data = parse_next(data)
         print("handle: ", value, data)
@@ -180,6 +181,9 @@ master_repl_offset:{replication.master_repl_offset}
             case [b'EXEC']:
                 if not multi_enabled:
                     conn.send(encode_resp("-ERR EXEC without MULTI"))
+                else:
+                    if len(transactions) == 0:
+                        conn.send(encode_resp([]))
 
             case _:
                 raise RuntimeError(f"Command not implemented: {value}")
