@@ -89,9 +89,9 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     while data or (data := conn.recv(4096)):
         value, data = parse_next(data)
         print("handle: ", value, data)
-        return handle_command(value, data, conn, is_replica_conn)
+        handle_command(value, conn, is_replica_conn)
 
-def handle_command(value: List, data: Any, conn: socket.socket, is_replica_conn: bool = False):
+def handle_command(value: List, conn: socket.socket, is_replica_conn: bool = False):
     global multi_enabled, transactions
     match value:
         case [b"PING"]:
@@ -150,53 +150,50 @@ master_repl_offset:{replication.master_repl_offset}
                 # for command in transactions:
                 multi_enabled = False
         case [b'INCR', k]:
-            if handle_transaction():
-                return
-            db_value = db.get(k)
-            if db_value is None:
-                new_value = 1
-            else:
-                try:
-                    current_int = int(db_value.value.decode())
-                    new_value = current_int + 1
-                except Exception:
-                    conn.send(encode_resp(
-                        "-ERR value is not an integer or out of range"))
-                    return
+            if not handle_transaction(value, conn):
+                db_value = db.get(k)
+                if db_value is None:
+                    new_value = 1
+                else:
+                    try:
+                        current_int = int(db_value.value.decode())
+                        new_value = current_int + 1
+                    except Exception:
+                        conn.send(encode_resp(
+                            "-ERR value is not an integer or out of range"))
+                        return
 
-            db[k] = rdb_parser.Value(
-                value=str(new_value).encode(),
-                expiry=None,
-            )
+                db[k] = rdb_parser.Value(
+                    value=str(new_value).encode(),
+                    expiry=None,
+                )
 
-            conn.send(encode_resp(new_value))
+                conn.send(encode_resp(new_value))
         case [b"SET", k, v, b"px", expiry_ms]:
-            if handle_transaction():
-                return
-            for rep in replication.connected_replicas:
-                rep.send(encode_resp(value))
-            now = datetime.datetime.now()
-            expiry_ms = datetime.timedelta(
-                milliseconds=int(expiry_ms.decode()),
-            )
-            db[k] = rdb_parser.Value(
-                value=v,
-                expiry=now + expiry_ms,
-            )
-            if not is_replica_conn:
-                conn.send(encode_resp("OK"))
+            if not handle_transaction(value, conn):
+                for rep in replication.connected_replicas:
+                    rep.send(encode_resp(value))
+                now = datetime.datetime.now()
+                expiry_ms = datetime.timedelta(
+                    milliseconds=int(expiry_ms.decode()),
+                )
+                db[k] = rdb_parser.Value(
+                    value=v,
+                    expiry=now + expiry_ms,
+                )
+                if not is_replica_conn:
+                    conn.send(encode_resp("OK"))
 
         case [b"SET", k, v]:
-            if handle_transaction():
-                return
-            for rep in replication.connected_replicas:
-                rep.send(encode_resp(value))
-            db[k] = rdb_parser.Value(
-                value=v,
-                expiry=None,
-            )
-            if not is_replica_conn:
-                conn.send(encode_resp("OK"))
+            if not handle_transaction(value, conn):
+                for rep in replication.connected_replicas:
+                    rep.send(encode_resp(value))
+                db[k] = rdb_parser.Value(
+                    value=v,
+                    expiry=None,
+                )
+                if not is_replica_conn:
+                    conn.send(encode_resp("OK"))
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
