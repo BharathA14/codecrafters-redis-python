@@ -146,7 +146,8 @@ master_repl_offset:{replication.master_repl_offset}
                         conn.send(encode_resp([]))
                     multi_enabled = False
             case [b'INCR', k]:
-                # add the conf
+                if handle_transaction():
+                    continue
                 db_value = db.get(k)
                 if db_value is None:
                     new_value = 1
@@ -166,7 +167,8 @@ master_repl_offset:{replication.master_repl_offset}
 
                 conn.send(encode_resp(new_value))
             case [b"SET", k, v, b"px", expiry_ms]:
-                # add the condn
+                if handle_transaction():
+                    continue
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 now = datetime.datetime.now()
@@ -181,7 +183,8 @@ master_repl_offset:{replication.master_repl_offset}
                     conn.send(encode_resp("OK"))
 
             case [b"SET", k, v]:
-                # add the condn
+                if handle_transaction():
+                    continue
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 db[k] = rdb_parser.Value(
@@ -193,7 +196,13 @@ master_repl_offset:{replication.master_repl_offset}
             case _:
                 raise RuntimeError(f"Command not implemented: {value}")
 
-
+def handle_transaction(command: List, conn: socket.socket):
+    global multi_enabled, transactions
+    if multi_enabled:
+        transactions.append(command)
+        conn.send(encode_resp("QUEUED"))
+        return True
+    return False
 def main(args: Args):
     global db
     db = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
