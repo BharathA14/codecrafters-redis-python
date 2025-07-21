@@ -49,6 +49,8 @@ def encode_resp(data: Any, trailing_crlf: bool = True) -> bytes:
             b"\r\n" if trailing_crlf else b"",
         )
     if isinstance(data, str):
+        if data[0]=="-":
+            return b"%b\r\n" % (data.encode(),)
         return b"+%b\r\n" % (data.encode(),)
     if isinstance(data, int):
         return b":%b\r\n" % (str(data).encode())
@@ -157,14 +159,18 @@ master_repl_offset:{replication.master_repl_offset}
                 if db_value is None:
                     new_value = 1
                 else:
-                    current_int = int(db_value.value.decode())
-                    new_value = current_int + 1
-                
-                db[k] = rdb_parser.Value(
-                    value=str(new_value).encode(),
-                    expiry=None,
-                )
-                conn.send(encode_resp(new_value))
+                    try:
+                        current_int = int(db_value.value.decode())
+                        new_value = current_int + 1
+                    
+                        db[k] = rdb_parser.Value(
+                            value=str(new_value).encode(),
+                            expiry=None,
+                        )
+                        conn.send(encode_resp(new_value))
+                    except Exception:
+                        conn.send(encode_resp("-ERR value is not an integer or out of range"))
+
             case _:
                 raise RuntimeError(f"Command not implemented: {value}")
 
