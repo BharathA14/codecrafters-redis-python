@@ -145,8 +145,13 @@ master_repl_offset:{replication.master_repl_offset}
                     )
                 )
                 conn.send(encode_resp(EMPTY_RDB, trailing_crlf=False))
+                # conn.send(encode_resp(["REPLCONF", "GETACK", "*"]))
                 replication.connected_replicas.append(conn)
+                # print('sent')
+            case [b"REPLCONF", b"GETACK", b"*"]:
+                conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
             case _:
+                print('ent')
                 raise RuntimeError(f"Command not implemented: {value}")
 
 
@@ -189,7 +194,7 @@ def main(args: Args):
         assert isinstance(resp, str)
         assert resp.startswith("FULLRESYNC")
         # Receive db
-        resp_bs = master_conn.recv(4096)
+        resp, _ = parse_next(master_conn.recv(4096))
 
         print(f"Handshake with master completed: {resp=}")
 
