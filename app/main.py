@@ -145,8 +145,8 @@ master_repl_offset:{replication.master_repl_offset}
             if not multi_enabled:
                 conn.send(encode_resp("-ERR EXEC without MULTI"))
             else:
-                if len(transactions) == 0:
-                    conn.send(encode_resp([]))
+                # if len(transactions) == 0:
+                conn.send(encode_resp([]))
                 # for command in transactions:
                 multi_enabled = False
         case [b'INCR', k]:
