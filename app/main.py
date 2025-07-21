@@ -172,6 +172,8 @@ master_repl_offset:{replication.master_repl_offset}
                 )
                 
                 conn.send(encode_resp(new_value))
+            case [b'MULTI']:
+                conn.send(encode_resp("OK"))
 
             case _:
                 raise RuntimeError(f"Command not implemented: {value}")
