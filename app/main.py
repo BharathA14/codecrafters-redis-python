@@ -13,6 +13,7 @@ EMPTY_RDB = bytes.fromhex(
 multi_enabled = False
 transactions = []
 
+
 @dataclasses.dataclass
 class Args:
     port: int
@@ -32,7 +33,7 @@ def parse_next(data: bytes):
         case b"$":
             l = int(first[1:].decode())
             blk = data[:l]
-            data = data[l + 2 :]
+            data = data[l + 2:]
             return blk, data
 
         case b"+":
@@ -50,7 +51,7 @@ def encode_resp(data: Any, trailing_crlf: bool = True) -> bytes:
             b"\r\n" if trailing_crlf else b"",
         )
     if isinstance(data, str):
-        if data[0]=="-":
+        if data[0] == "-":
             return b"%b\r\n" % (data.encode(),)
         return b"+%b\r\n" % (data.encode(),)
     if isinstance(data, int):
@@ -94,28 +95,6 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
                 conn.send(encode_resp("PONG"))
             case [b"ECHO", s]:
                 conn.send(encode_resp(s))
-            case [b"SET", k, v]:
-                for rep in replication.connected_replicas:
-                    rep.send(encode_resp(value))
-                db[k] = rdb_parser.Value(
-                    value=v,
-                    expiry=None,
-                )
-                if not is_replica_conn:
-                    conn.send(encode_resp("OK"))
-            case [b"SET", k, v, b"px", expiry_ms]:
-                for rep in replication.connected_replicas:
-                    rep.send(encode_resp(value))
-                now = datetime.datetime.now()
-                expiry_ms = datetime.timedelta(
-                    milliseconds=int(expiry_ms.decode()),
-                )
-                db[k] = rdb_parser.Value(
-                    value=v,
-                    expiry=now + expiry_ms,
-                )
-                if not is_replica_conn:
-                    conn.send(encode_resp("OK"))
             case [b"GET", k]:
                 now = datetime.datetime.now()
                 value = db.get(k)
@@ -156,7 +135,18 @@ master_repl_offset:{replication.master_repl_offset}
                 # print('sent')
             case [b"REPLCONF", b"GETACK", b"*"]:
                 conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
+            case [b'MULTI']:
+                multi_enabled = True
+                conn.send(encode_resp("OK"))
+            case [b'EXEC']:
+                if not multi_enabled:
+                    conn.send(encode_resp("-ERR EXEC without MULTI"))
+                else:
+                    if len(transactions) == 0:
+                        conn.send(encode_resp([]))
+                    multi_enabled = False
             case [b'INCR', k]:
+                # add the conf
                 db_value = db.get(k)
                 if db_value is None:
                     new_value = 1
@@ -165,26 +155,41 @@ master_repl_offset:{replication.master_repl_offset}
                         current_int = int(db_value.value.decode())
                         new_value = current_int + 1
                     except Exception:
-                        conn.send(encode_resp("-ERR value is not an integer or out of range"))
+                        conn.send(encode_resp(
+                            "-ERR value is not an integer or out of range"))
                         continue
-                
+
                 db[k] = rdb_parser.Value(
                     value=str(new_value).encode(),
                     expiry=None,
                 )
-                
-                conn.send(encode_resp(new_value))   
-            case [b'MULTI']:
-                multi_enabled = True
-                conn.send(encode_resp("OK"))
-            
-            case [b'EXEC']:
-                if not multi_enabled:
-                    conn.send(encode_resp("-ERR EXEC without MULTI"))
-                else:
-                    if len(transactions) == 0:
-                        conn.send(encode_resp([]))
 
+                conn.send(encode_resp(new_value))
+            case [b"SET", k, v, b"px", expiry_ms]:
+                # add the condn
+                for rep in replication.connected_replicas:
+                    rep.send(encode_resp(value))
+                now = datetime.datetime.now()
+                expiry_ms = datetime.timedelta(
+                    milliseconds=int(expiry_ms.decode()),
+                )
+                db[k] = rdb_parser.Value(
+                    value=v,
+                    expiry=now + expiry_ms,
+                )
+                if not is_replica_conn:
+                    conn.send(encode_resp("OK"))
+
+            case [b"SET", k, v]:
+                # add the condn
+                for rep in replication.connected_replicas:
+                    rep.send(encode_resp(value))
+                db[k] = rdb_parser.Value(
+                    value=v,
+                    expiry=None,
+                )
+                if not is_replica_conn:
+                    conn.send(encode_resp("OK"))
             case _:
                 raise RuntimeError(f"Command not implemented: {value}")
 
@@ -213,7 +218,7 @@ def main(args: Args):
                     b"listening-port",
                     str(args.port).encode(),
                 ]
-            )   
+            )
         )
         resp, _ = parse_next(master_conn.recv(4096))
         assert resp == "OK"
