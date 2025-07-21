@@ -10,7 +10,7 @@ from app import rdb_parser
 EMPTY_RDB = bytes.fromhex(
     "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
 )
-
+multi_enabled = False
 
 @dataclasses.dataclass
 class Args:
@@ -84,6 +84,7 @@ replication = Replication(
 
 def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
+    global multi_enabled
     while data or (data := conn.recv(4096)):
         value, data = parse_next(data)
         print("handle: ", value, data)
@@ -171,9 +172,14 @@ master_repl_offset:{replication.master_repl_offset}
                     expiry=None,
                 )
                 
-                conn.send(encode_resp(new_value))
+                conn.send(encode_resp(new_value))   
             case [b'MULTI']:
+                multi_enabled = True
                 conn.send(encode_resp("OK"))
+            
+            case [b'EXEC']:
+                if not multi_enabled:
+                    conn.send(encode_resp("-ERR EXEC without MULTI"))
 
             case _:
                 raise RuntimeError(f"Command not implemented: {value}")
