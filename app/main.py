@@ -10,7 +10,7 @@ from app import rdb_parser
 EMPTY_RDB = bytes.fromhex(
     "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
 )
-multi_enabled = False
+transaction_enabled = {}
 transactions = []
 
 
@@ -33,7 +33,7 @@ def parse_next(data: bytes):
         case b"$":
             l = int(first[1:].decode())
             blk = data[:l]
-            data = data[l + 2:]
+            data = data[l + 2 :]
             return blk, data
 
         case b"+":
@@ -43,7 +43,9 @@ def parse_next(data: bytes):
             raise RuntimeError(f"Parse not implemented: {first[:1]}")
 
 
-def encode_resp(data: Any, trailing_crlf: bool = True) -> bytes:
+def encode_resp(
+    data: Any, trailing_crlf: bool = True, encoded_list: bool = False
+) -> bytes:
     if isinstance(data, bytes):
         return b"$%b\r\n%b%b" % (
             str(len(data)).encode(),
@@ -86,29 +88,46 @@ replication = Replication(
 
 def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
+    global transaction_enabled
+
     while data or (data := conn.recv(4096)):
         value, data = parse_next(data)
-        print("handle: ", value, data)
-        handle_command(value, conn, is_replica_conn)
+        trailing_crlf = True
+
+        if conn not in transaction_enabled.keys():
+            transaction_enabled[conn] = False
+
+        response = handle_command(value, conn, is_replica_conn, trailing_crlf)
+
+        if not transaction_enabled[conn]:
+            encoded_resp = encode_resp(response, trailing_crlf)
+            conn.send(encoded_resp)
 
 
-def handle_command(value: List, conn: socket.socket, is_replica_conn: bool = False):
-    global multi_enabled, transactions
+def handle_command(
+    value: List,
+    conn: socket.socket,
+    is_replica_conn: bool = False,
+    trailing_crlf: bool = True,
+) -> str | None | List[Any]:
+    global transaction_enabled, transactions
+    response = b""
     match value:
         case [b"PING"]:
-            conn.send(encode_resp("PONG"))
+            response = "PONG"
         case [b"ECHO", s]:
-            conn.send(encode_resp(s))
+            response = s
         case [b"GET", k]:
-            now = datetime.datetime.now()
-            value = db.get(k)
-            if value is None:
-                conn.send(encode_resp(None))
-            elif value.expiry is not None and now >= value.expiry:
-                db.pop(k)
-                conn.send(encode_resp(None))
-            else:
-                conn.send(encode_resp(value.value))
+            if not queue_transaction(value, conn):
+                now = datetime.datetime.now()
+                value = db.get(k)
+                if value is None:
+                    response = None
+                elif value.expiry is not None and now >= value.expiry:
+                    db.pop(k)
+                    response = None
+                else:
+                    response = value.value
         case [b"INFO", b"replication"]:
             if args.replicaof is None:
                 info = f"""\
@@ -118,42 +137,42 @@ master_repl_offset:{replication.master_repl_offset}
 """.encode()
             else:
                 info = b"""role:slave\n"""
-            conn.send(encode_resp(info))
+            response = info
         case [b"REPLCONF", b"listening-port", port]:
-            conn.send(encode_resp("OK"))
+            response = "OK"
         case [b"REPLCONF", b"capa", b"psync2"]:
-            conn.send(encode_resp("OK"))
+            response = "OK"
         case [b"REPLCONF", b"GETACK", b"*"]:
-            conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
+            response = ["REPLCONF", "ACK", "0"]
         case [b"PSYNC", replid, offset]:
-            conn.send(
-                encode_resp(
-                    f"FULLRESYNC "
-                    f"{replication.master_replid} "
-                    f"{replication.master_repl_offset}"
-                )
+            response = (
+                f"FULLRESYNC "
+                f"{replication.master_replid} "
+                f"{replication.master_repl_offset}"
             )
-            conn.send(encode_resp(EMPTY_RDB, trailing_crlf=False))
-            # conn.send(encode_resp(["REPLCONF", "GETACK", "*"]))
+
+            response = EMPTY_RDB
+            trailing_crlf = False
+            # response = ["REPLCONF", "GETACK", "*"])
             replication.connected_replicas.append(conn)
             # print('sent')
         case [b"REPLCONF", b"GETACK", b"*"]:
-            conn.send(encode_resp(["REPLCONF", "ACK", "0"]))
-        case [b'MULTI']:
-            multi_enabled = True
+            response = ["REPLCONF", "ACK", "0"]
+        case [b"MULTI"]:
+            transaction_enabled[conn] = True
             conn.send(encode_resp("OK"))
-        case [b'EXEC']:
-            if not multi_enabled:
-                conn.send(encode_resp("-ERR EXEC without MULTI"))
+        case [b"EXEC"]:
+            if not transaction_enabled[conn]:
+                response = "-ERR EXEC without MULTI"
             else:
-                multi_enabled = False
+                transaction_enabled[conn] = False
                 if len(transactions) == 0:
-                    conn.send(encode_resp([]))
-                for command in transactions:
-                    handle_command(command, conn, is_replica_conn)
+                    return []
+                response = handle_transaction(conn, is_replica_conn)
+                transactions = []
 
-        case [b'INCR', k]:
-            if not handle_transaction(value, conn):
+        case [b"INCR", k]:
+            if not queue_transaction(value, conn):
                 db_value = db.get(k)
                 if db_value is None:
                     new_value = 1
@@ -162,18 +181,17 @@ master_repl_offset:{replication.master_repl_offset}
                         current_int = int(db_value.value.decode())
                         new_value = current_int + 1
                     except Exception:
-                        conn.send(encode_resp(
-                            "-ERR value is not an integer or out of range"))
-                        return
+                        response = "-ERR value is not an integer or out of range"
+                        return response
 
                 db[k] = rdb_parser.Value(
                     value=str(new_value).encode(),
                     expiry=None,
                 )
 
-                conn.send(encode_resp(new_value))
+                response = new_value
         case [b"SET", k, v, b"px", expiry_ms]:
-            if not handle_transaction(value, conn):
+            if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 now = datetime.datetime.now()
@@ -185,9 +203,9 @@ master_repl_offset:{replication.master_repl_offset}
                     expiry=now + expiry_ms,
                 )
                 if not is_replica_conn:
-                    conn.send(encode_resp("OK"))
+                    response = "OK"
         case [b"SET", k, v]:
-            if not handle_transaction(value, conn):
+            if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 db[k] = rdb_parser.Value(
@@ -195,18 +213,29 @@ master_repl_offset:{replication.master_repl_offset}
                     expiry=None,
                 )
                 if not is_replica_conn:
-                    conn.send(encode_resp("OK"))
+                    response = "OK"
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
+    return response
 
-def handle_transaction(command: List, conn: socket.socket):
-    global multi_enabled, transactions
-    if multi_enabled:
+
+def queue_transaction(command: List, conn: socket.socket):
+    global transaction_enabled, transactions
+    if conn in transaction_enabled.keys() and transaction_enabled[conn] == True:
         transactions.append(command)
         conn.send(encode_resp("QUEUED"))
         return True
     return False
+
+
+def handle_transaction(conn: socket.socket, is_replica_conn: bool):
+    global transactions
+    response = []
+    for transaction in transactions:
+        response.append(handle_command(transaction, conn, is_replica_conn))
+    print(response)
+    return response
 
 
 def main(args: Args):
