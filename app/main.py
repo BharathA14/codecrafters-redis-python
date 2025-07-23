@@ -105,6 +105,20 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
             conn.send(encoded_resp)
 
 
+def handle_neg_index(s:int, e:int, list_len: int):
+    if s<0:
+        if abs(s)<= list_len:
+            s = list_len + s
+        else:
+            s = 0
+    if e <0:
+        if abs(e)<= list_len:
+            e = list_len + e
+        else:
+            e = 0
+    return s, e
+
+
 def handle_command(
     value: List,
     conn: socket.socket,
@@ -194,7 +208,8 @@ master_repl_offset:{replication.master_repl_offset}
                     response = len(db[k].value)
         case [b'LRANGE', k, s, e]:
             if k in db.keys():
-                response = db[k].value[int(s):int(e)+1]
+                int_s, int_e = handle_neg_index(int(s), int(e), len(db[k].value))
+                response = db[k].value[int_s:int_e+1]
             else:
                 response = []
         case [b"INCR", k]:
