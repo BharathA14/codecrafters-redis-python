@@ -180,7 +180,6 @@ master_repl_offset:{replication.master_repl_offset}
                 transactions[conn] = []
 
         case [b'RPUSH', k, *v]:
-            print(k,v)
             if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
@@ -193,7 +192,11 @@ master_repl_offset:{replication.master_repl_offset}
                     )
                 if not is_replica_conn:
                     response = len(db[k].value)
-
+        case [b'LRANGE', k, s, e]:
+            if k in db.keys():
+                response = db[k].value[int(s):int(e)+1]
+            else:
+                response = []
         case [b"INCR", k]:
             if not queue_transaction(value, conn):
                 db_value = db.get(k)
