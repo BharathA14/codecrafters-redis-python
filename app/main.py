@@ -11,7 +11,7 @@ EMPTY_RDB = bytes.fromhex(
     "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
 )
 transaction_enabled = {}
-transactions = []
+transactions = {}
 
 
 @dataclasses.dataclass
@@ -88,7 +88,7 @@ replication = Replication(
 
 def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
-    global transaction_enabled
+    global transaction_enabled, transactions
 
     while data or (data := conn.recv(4096)):
         value, data = parse_next(data)
@@ -96,6 +96,7 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
 
         if conn not in transaction_enabled.keys():
             transaction_enabled[conn] = False
+            transactions[conn] = []
 
         response = handle_command(value, conn, is_replica_conn, trailing_crlf)
 
@@ -158,6 +159,13 @@ master_repl_offset:{replication.master_repl_offset}
             # print('sent')
         case [b"REPLCONF", b"GETACK", b"*"]:
             response = ["REPLCONF", "ACK", "0"]
+        case [b"DISCARD"]:
+            if transaction_enabled[conn]:
+                transaction_enabled[conn] = False
+                transactions[conn] = []
+                response = "OK"
+            else:
+                response = "-ERR DISCARD without MULTI"
         case [b"MULTI"]:
             transaction_enabled[conn] = True
             conn.send(encode_resp("OK"))
@@ -166,10 +174,10 @@ master_repl_offset:{replication.master_repl_offset}
                 response = "-ERR EXEC without MULTI"
             else:
                 transaction_enabled[conn] = False
-                if len(transactions) == 0:
+                if len(transactions[conn]) == 0:
                     return []
                 response = handle_transaction(conn, is_replica_conn)
-                transactions = []
+                transactions[conn] = []
 
         case [b"INCR", k]:
             if not queue_transaction(value, conn):
@@ -223,7 +231,7 @@ master_repl_offset:{replication.master_repl_offset}
 def queue_transaction(command: List, conn: socket.socket):
     global transaction_enabled, transactions
     if conn in transaction_enabled.keys() and transaction_enabled[conn] == True:
-        transactions.append(command)
+        transactions[conn].append(command)
         conn.send(encode_resp("QUEUED"))
         return True
     return False
@@ -232,7 +240,7 @@ def queue_transaction(command: List, conn: socket.socket):
 def handle_transaction(conn: socket.socket, is_replica_conn: bool):
     global transactions
     response = []
-    for transaction in transactions:
+    for transaction in transactions[conn]:
         response.append(handle_command(transaction, conn, is_replica_conn))
     print(response)
     return response
