@@ -105,14 +105,14 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
             conn.send(encoded_resp)
 
 
-def handle_neg_index(s:int, e:int, list_len: int):
-    if s<0:
-        if abs(s)<= list_len:
+def handle_neg_index(s: int, e: int, list_len: int):
+    if s < 0:
+        if abs(s) <= list_len:
             s = list_len + s
         else:
             s = 0
-    if e <0:
-        if abs(e)<= list_len:
+    if e < 0:
+        if abs(e) <= list_len:
             e = list_len + e
         else:
             e = 0
@@ -193,23 +193,31 @@ master_repl_offset:{replication.master_repl_offset}
                 response = handle_transaction(conn, is_replica_conn)
                 transactions[conn] = []
 
-        case [b'RPUSH', k, *v]:
+        case [b"LPUSH", k, *v]:
+            if not queue_transaction(value, conn):
+                for rep in replication.connected_replicas:
+                    rep.send(encode_resp(value))
+                if k in db.keys():
+                    db[k].value = v.extend(db[k].value)
+                else:
+                    db[k] = rdb_parser.Value(value=v, expiry=None)
+                if not is_replica_conn:
+                    response = len(db[k].value)
+
+        case [b"RPUSH", k, *v]:
             if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 if k in db.keys():
                     db[k].value.extend(v)
                 else:
-                    db[k] = rdb_parser.Value(
-                        value=v,
-                        expiry=None
-                    )
+                    db[k] = rdb_parser.Value(value=v, expiry=None)
                 if not is_replica_conn:
                     response = len(db[k].value)
-        case [b'LRANGE', k, s, e]:
+        case [b"LRANGE", k, s, e]:
             if k in db.keys():
                 int_s, int_e = handle_neg_index(int(s), int(e), len(db[k].value))
-                response = db[k].value[int_s:int_e+1]
+                response = db[k].value[int_s : int_e + 1]
             else:
                 response = []
         case [b"INCR", k]:
