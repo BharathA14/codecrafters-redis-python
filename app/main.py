@@ -179,6 +179,20 @@ master_repl_offset:{replication.master_repl_offset}
                 response = handle_transaction(conn, is_replica_conn)
                 transactions[conn] = []
 
+        case [b'RPUSH', k, v]:
+            if not queue_transaction(value, conn):
+                for rep in replication.connected_replicas:
+                    rep.send(encode_resp(value))
+                if k in db.keys():
+                    db[k].value.append(v)
+                else:
+                    db[k] = rdb_parser.Value(
+                        value=[v],
+                        expiry=None
+                    )
+                if not is_replica_conn:
+                    response = len(db[k].value)
+
         case [b"INCR", k]:
             if not queue_transaction(value, conn):
                 db_value = db.get(k)
