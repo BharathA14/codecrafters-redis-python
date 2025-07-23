@@ -179,15 +179,16 @@ master_repl_offset:{replication.master_repl_offset}
                 response = handle_transaction(conn, is_replica_conn)
                 transactions[conn] = []
 
-        case [b'RPUSH', k, v]:
+        case [b'RPUSH', k, *v]:
+            print(k,v)
             if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 if k in db.keys():
-                    db[k].value.append(v)
+                    db[k].value.extend(v)
                 else:
                     db[k] = rdb_parser.Value(
-                        value=[v],
+                        value=v,
                         expiry=None
                     )
                 if not is_replica_conn:
