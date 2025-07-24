@@ -198,9 +198,11 @@ master_repl_offset:{replication.master_repl_offset}
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
                 if k in db.keys():
-                    db[k].value = v.extend(db[k].value)
+                    v = v[::-1]
+                    v.extend(db[k].value)
+                    db[k].value = v
                 else:
-                    db[k] = rdb_parser.Value(value=v, expiry=None)
+                    db[k] = rdb_parser.Value(value=v[::-1], expiry=None)
                 if not is_replica_conn:
                     response = len(db[k].value)
 
