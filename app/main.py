@@ -192,7 +192,11 @@ master_repl_offset:{replication.master_repl_offset}
                     return []
                 response = handle_transaction(conn, is_replica_conn)
                 transactions[conn] = []
-
+        case [b'LLEN',k]:
+            if k in db.keys():
+                response = len(db[k].value)
+            else:
+                response = 0
         case [b"LPUSH", k, *v]:
             if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
