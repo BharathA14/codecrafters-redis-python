@@ -197,13 +197,23 @@ master_repl_offset:{replication.master_repl_offset}
                 response = len(db[k].value)
             else:
                 response = 0
-        case [b'LPOP', k]:
+        case [b'LPOP', k, *v]:
+            print(v)
             if k in db.keys():
                 if len(db.keys()) == 0:
                     response = None
                 else:
-                    response = db[k].value[0]
-                    db[k].value = db[k].value[1:]
+                    if len(v) == 0:
+                        response = db[k].value[0]
+                        db[k].value = db[k].value[1:]
+                    else:
+                        if int(v[0]) >= len(db[k].value):
+                            response = db[k].value
+                            db[k].value = []
+                        else:
+                            response = db[k].value[:int(v[0])]
+                            db[k].value = db[k].value[int(v[0]):]
+
         case [b"LPUSH", k, *v]:
             if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
