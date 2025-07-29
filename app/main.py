@@ -3,6 +3,8 @@ import socket
 import threading
 import datetime
 import argparse
+import time
+from datetime import timedelta
 from typing import Any, Dict, Optional, cast, List
 
 from app import rdb_parser
@@ -120,17 +122,18 @@ def handle_neg_index(s: int, e: int, list_len: int):
             e = 0
     return s, e
 
-def handle_blpop(k:str, t:datetime.datetime):
+def handle_blpop(k:str, t:datetime.datetime, conn: socket.socket):
     while True:
-        # if datetime.datetime.now() < t:
-        #     return conn.
-        # else:
-        with bl_pop_lock:
-            if k in db.keys() and len(db[k].value) > 0:
-                conn = bl_pop_queue[k].pop(0)
-                conn.send(encode_resp([k,db[k].value[0]]))
-                db[k].value = db[k].value[1:]
-                return
+        if datetime.datetime.now() > t:
+            conn.send(encode_resp(None))
+            return
+        else:
+            with bl_pop_lock:
+                if k in db.keys() and len(db[k].value) > 0:
+                    conn = bl_pop_queue[k].pop(0)
+                    conn.send(encode_resp([k,db[k].value[0]]))
+                    db[k].value = db[k].value[1:]
+                    return
 
 
 def handle_command(
@@ -234,9 +237,15 @@ master_repl_offset:{replication.master_repl_offset}
                     bl_pop_queue[k].append(conn)
                 else:
                     bl_pop_queue[k] = [conn]
+
+                dt = datetime.datetime.now()
+                td = timedelta(seconds=float(t))
+                if float(t) == 0:
+                    td = timedelta(days=1)
+                dt = dt.__add__(td)
                 threading.Thread(
                     target=handle_blpop,
-                    args=(k, int(t),),
+                    args=(k,dt,conn,),
                 ).start()
                 response = "custom"
                 # once the list is empty make sure to destory the key from dict
