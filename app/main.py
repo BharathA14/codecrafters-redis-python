@@ -12,6 +12,7 @@ EMPTY_RDB = bytes.fromhex(
 )
 transaction_enabled = {}
 transactions = {}
+bl_pop_queue = {} # {key: [conn,...] }
 
 
 @dataclasses.dataclass
@@ -100,7 +101,7 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
 
         response = handle_command(value, conn, is_replica_conn, trailing_crlf)
 
-        if not transaction_enabled[conn]:
+        if not transaction_enabled[conn] and response !="custom":
             encoded_resp = encode_resp(response, trailing_crlf)
             conn.send(encoded_resp)
 
@@ -117,6 +118,20 @@ def handle_neg_index(s: int, e: int, list_len: int):
         else:
             e = 0
     return s, e
+
+def handle_blpop(k:str, t:datetime.datetime):
+    while True:
+        # if datetime.datetime.now() < t:
+        #     return conn.
+        # else:
+        if k not in db.keys() or (k in db.keys() and len(db[k].value) == 0):
+            continue
+        else:
+            # print("Entered")
+            conn = bl_pop_queue[k].pop(0)
+            conn.send(encode_resp([k,db[k].value[0]]))
+            db[k].value = db[k].value[1:]
+            break
 
 
 def handle_command(
@@ -198,7 +213,6 @@ master_repl_offset:{replication.master_repl_offset}
             else:
                 response = 0
         case [b'LPOP', k, *v]:
-            print(v)
             if k in db.keys():
                 if len(db.keys()) == 0:
                     response = None
@@ -213,6 +227,23 @@ master_repl_offset:{replication.master_repl_offset}
                         else:
                             response = db[k].value[:int(v[0])]
                             db[k].value = db[k].value[int(v[0]):]
+
+        case [b'BLPOP', k, t]:
+            global bl_pop_queue
+            if k in bl_pop_queue.keys() or k not in db.keys() or (k in db.keys() and len(db[k].value) == 0):
+                if k in bl_pop_queue.keys():
+                    bl_pop_queue[k].append(conn)
+                else:
+                    bl_pop_queue[k] = [conn]
+                threading.Thread(
+                    target=handle_blpop,
+                    args=(k, int(t),),
+                ).start()
+                response = "custom"
+                # once the list is empty make sure to destory the key from dict
+            else:
+                response = db[k].value[0]
+                db[k].value = db[k].value[1:]
 
         case [b"LPUSH", k, *v]:
             if not queue_transaction(value, conn):
