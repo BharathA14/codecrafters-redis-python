@@ -13,6 +13,7 @@ EMPTY_RDB = bytes.fromhex(
 transaction_enabled = {}
 transactions = {}
 bl_pop_queue = {} # {key: [conn,...] }
+bl_pop_lock = threading.Lock()
 
 
 @dataclasses.dataclass
@@ -124,14 +125,12 @@ def handle_blpop(k:str, t:datetime.datetime):
         # if datetime.datetime.now() < t:
         #     return conn.
         # else:
-        if k not in db.keys() or (k in db.keys() and len(db[k].value) == 0):
-            continue
-        else:
-            # print("Entered")
-            conn = bl_pop_queue[k].pop(0)
-            conn.send(encode_resp([k,db[k].value[0]]))
-            db[k].value = db[k].value[1:]
-            break
+        with bl_pop_lock:
+            if k in db.keys() and len(db[k].value) > 0:
+                conn = bl_pop_queue[k].pop(0)
+                conn.send(encode_resp([k,db[k].value[0]]))
+                db[k].value = db[k].value[1:]
+                return
 
 
 def handle_command(
