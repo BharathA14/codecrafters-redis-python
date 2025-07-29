@@ -22,29 +22,62 @@ bl_pop_lock = threading.Lock()
 class Args:
     port: int
     replicaof: Optional[str]
+    dir: str
+    dbfilename: str
 
 
-def parse_next(data: bytes):
+def parse_single(data: bytes):
+    """Parse a single RESP command from data"""
+    if not data or b"\r\n" not in data:
+        raise ValueError("Not enough data")
+        
     first, data = data.split(b"\r\n", 1)
     match first[:1]:
         case b"*":
             value = []
             l = int(first[1:].decode())
             for _ in range(l):
-                item, data = parse_next(data)
+                item, data = parse_single(data)
                 value.append(item)
             return value, data
         case b"$":
             l = int(first[1:].decode())
+            if l == -1:  # Null bulk string
+                return None, data
+            if len(data) < l + 2:  # Not enough data for content + \r\n
+                raise ValueError("Not enough data for bulk string")
             blk = data[:l]
-            data = data[l + 2 :]
+            data = data[l + 2:]  # Skip the content and \r\n
             return blk, data
 
         case b"+":
             return first[1:].decode(), data
 
+        case b":":
+            return int(first[1:].decode()), data
+
+        case b"-":
+            return first[1:].decode(), data
+
         case _:
             raise RuntimeError(f"Parse not implemented: {first[:1]}")
+
+def parse_next(data: bytes):
+    """Parse all RESP commands from data and return list of commands"""
+    print("next_data", data)
+    commands = []
+    remaining_data = data
+    
+    while remaining_data and b"\r\n" in remaining_data:
+        try:
+            command, remaining_data = parse_single(remaining_data)
+            commands.append(command)
+        except (ValueError, IndexError) as e:
+            # Not enough data for complete command, break and return what we have
+            print(f"Parse error: {e}, stopping parse")
+            break
+    
+    return commands, remaining_data
 
 
 def encode_resp(
@@ -94,19 +127,23 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
     global transaction_enabled, transactions
 
-    while data or (data := conn.recv(4096)):
-        value, data = parse_next(data)
-        trailing_crlf = True
+    while data or (data := conn.recv(65536)):
+        # Parse all commands from the data buffer
+        commands, data = parse_next(data)
+        
+        for value in commands:
+            trailing_crlf = True
 
-        if conn not in transaction_enabled.keys():
-            transaction_enabled[conn] = False
-            transactions[conn] = []
+            if conn not in transaction_enabled.keys():
+                transaction_enabled[conn] = False
+                transactions[conn] = []
 
-        response = handle_command(value, conn, is_replica_conn, trailing_crlf)
+            response = handle_command(args, value, conn, is_replica_conn, trailing_crlf)
+            # print(response)
 
-        if not transaction_enabled[conn] and response !="custom":
-            encoded_resp = encode_resp(response, trailing_crlf)
-            conn.send(encoded_resp)
+            if not transaction_enabled[conn] and response !="custom":
+                encoded_resp = encode_resp(response, trailing_crlf)
+                conn.send(encoded_resp)
 
 
 def handle_neg_index(s: int, e: int, list_len: int):
@@ -137,13 +174,15 @@ def handle_blpop(k:str, t:datetime.datetime, conn: socket.socket):
 
 
 def handle_command(
+    args: Args,
     value: List,
     conn: socket.socket,
     is_replica_conn: bool = False,
     trailing_crlf: bool = True,
 ) -> str | None | List[Any]:
     global transaction_enabled, transactions
-    response = b""
+    response = "custom"
+    # print(value, is_replica_conn)
     match value:
         case [b"PING"]:
             response = "PONG"
@@ -162,14 +201,13 @@ def handle_command(
                     response = value.value
         case [b"INFO", b"replication"]:
             if args.replicaof is None:
-                info = f"""\
+                response = f"""\
 role:master
 master_replid:{replication.master_replid}
 master_repl_offset:{replication.master_repl_offset}
 """.encode()
             else:
-                info = b"""role:slave\n"""
-            response = info
+                response = b"""role:slave\n"""
         case [b"REPLCONF", b"listening-port", port]:
             response = "OK"
         case [b"REPLCONF", b"capa", b"psync2"]:
@@ -177,14 +215,14 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"REPLCONF", b"GETACK", b"*"]:
             response = ["REPLCONF", "ACK", "0"]
         case [b"PSYNC", replid, offset]:
-            response = (
+            response = "custom"
+            conn.send (encode_resp(
                 f"FULLRESYNC "
-                f"{replication.master_replid} "
+                f"{replication.master_replid} " 
                 f"{replication.master_repl_offset}"
-            )
-
-            response = EMPTY_RDB
-            trailing_crlf = False
+            ))
+            conn.send(encode_resp(EMPTY_RDB, False))
+            # response = EMPTY_RDB
             # response = ["REPLCONF", "GETACK", "*"])
             replication.connected_replicas.append(conn)
             # print('sent')
@@ -207,7 +245,7 @@ master_repl_offset:{replication.master_repl_offset}
                 transaction_enabled[conn] = False
                 if len(transactions[conn]) == 0:
                     return []
-                response = handle_transaction(conn, is_replica_conn)
+                response = handle_transaction(args, conn, is_replica_conn)
                 transactions[conn] = []
         case [b"TYPE",k]:
             if k in db.keys():
@@ -346,12 +384,11 @@ def queue_transaction(command: List, conn: socket.socket):
     return False
 
 
-def handle_transaction(conn: socket.socket, is_replica_conn: bool):
+def handle_transaction(args: Args, conn: socket.socket, is_replica_conn: bool):
     global transactions
     response = []
     for transaction in transactions[conn]:
-        response.append(handle_command(transaction, conn, is_replica_conn))
-    print(response)
+        response.append(handle_command(args, transaction, conn, is_replica_conn))
     return response
 
 
@@ -367,9 +404,15 @@ def main(args: Args):
         port = int(port)
         master_conn = socket.create_connection((host, port))
 
+        t = threading.Thread(
+            target=handle_conn,
+            args=(args, master_conn, True),
+            daemon=True,
+        )
         # Handshake PING
         master_conn.send(encode_resp([b"PING"]))
-        resp, _ = parse_next(master_conn.recv(4096))
+        responses, _ = parse_next(master_conn.recv(65536))
+        resp = responses[0] if responses else None
         assert resp == "PONG"
         # Handshake REPLCONF listening-port
         master_conn.send(
@@ -381,28 +424,31 @@ def main(args: Args):
                 ]
             )
         )
-        resp, _ = parse_next(master_conn.recv(4096))
+        responses, _ = parse_next(master_conn.recv(65536))
+        resp = responses[0] if responses else None
         assert resp == "OK"
         # Handshake REPLCONF capabilities
         master_conn.send(encode_resp([b"REPLCONF", b"capa", b"psync2"]))
-        resp, _ = parse_next(master_conn.recv(4096))
+        responses, _ = parse_next(master_conn.recv(65536))
+        resp = responses[0] if responses else None
         assert resp == "OK"
 
         # Handshake PSYNC
         master_conn.send(encode_resp([b"PSYNC", b"?", b"-1"]))
-        resp, _ = parse_next(master_conn.recv(4096))
-        assert isinstance(resp, str)
-        assert resp.startswith("FULLRESYNC")
+        responses, _ = parse_next(master_conn.recv(65536))
+        resp = responses[0] if responses else None
+        print("PSYNC", resp)
+        # assert isinstance(resp, str)
+        # assert resp.startswith("FULLRESYNC")
         # Receive db
-        resp, _ = parse_next(master_conn.recv(4096))
+        responses, _ = parse_next(master_conn.recv(65536))
+        resp = responses[0] if responses else None
+        # print("DB", resp)
 
+        t.start()
         print(f"Handshake with master completed: {resp=}")
 
-        threading.Thread(
-            target=handle_conn,
-            args=(args, master_conn, True),
-            daemon=True,
-        ).start()
+
     with server_socket:
         while True:
             (conn, _) = server_socket.accept()
@@ -423,4 +469,14 @@ if __name__ == "__main__":
     args.add_argument("--replicaof", required=False)
     args.add_argument("--dir", default=".")
     args.add_argument("--dbfilename", default="empty.rdb")
-    main(cast(Args, args.parse_args()))
+    
+    parsed_args = args.parse_args()
+    
+    args = Args(
+        port=parsed_args.port,
+        replicaof=parsed_args.replicaof,
+        dir=parsed_args.dir,
+        dbfilename=parsed_args.dbfilename
+    )
+    
+    main(args)
