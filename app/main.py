@@ -492,12 +492,6 @@ def main(args: Args):
                 count += len(responses)
 
         print("PSYNC response", responses)
-        # assert isinstance(resp, str)
-        # assert resp.startswith("FULLRESYNC")
-        # Receive db
-        # responses, _ = parse_next(master_conn.recv(65536))
-        # resp = responses[0] if responses else None
-        # print("DB", resp)
 
         t.start()
         print(f"Handshake with master completed: {resp=}")
