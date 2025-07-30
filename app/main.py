@@ -16,7 +16,7 @@ transaction_enabled = {}
 transactions = {}
 bl_pop_queue = {} # {key: [conn,...] }
 bl_pop_lock = threading.Lock()
-
+processed_bytes = 0
 
 @dataclasses.dataclass
 class Args:
@@ -105,11 +105,10 @@ def parse_next(data: bytes):
         if first_byte not in [b"*", b"$", b"+", b":", b"-"]:
             print(f"Unknown command start: {first_byte}, remaining: {remaining_data[:20]}...")
             break
-            
         try:
             command, remaining_data = parse_single(remaining_data)
             commands.append(command)
-            print(f"Parsed command: {command}")
+            # print(f"Parsed command: {command}")
         except (ValueError, IndexError) as e:
             print(f"Parse error: {e}, stopping parse")
             break
@@ -162,10 +161,12 @@ replication = Replication(
 
 def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
-    global transaction_enabled, transactions
+    global transaction_enabled, transactions, processed_bytes
 
     while data or (data := conn.recv(65536)):
-        # Parse all commands from the data buffer
+        # FIX: Does not differentiate between separate client and master connection
+        if is_replica_conn:
+            processed_bytes += len(data)
         commands, data = parse_next(data)
         
         for value in commands:
@@ -174,12 +175,12 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
             if conn not in transaction_enabled.keys():
                 transaction_enabled[conn] = False
                 transactions[conn] = []
-
+            print("handle_conn, command: ", value)
             response = handle_command(args, value, conn, is_replica_conn, trailing_crlf)
-            # print(response)
 
             if not transaction_enabled[conn] and response !="custom":
                 encoded_resp = encode_resp(response, trailing_crlf)
+                print("Encoded_response", encoded_resp)
                 conn.send(encoded_resp)
 
 
@@ -219,10 +220,11 @@ def handle_command(
 ) -> str | None | List[Any]:
     global transaction_enabled, transactions
     response = "custom"
-    # print(value, is_replica_conn)
+    print("handle_command", value, is_replica_conn)
     match value:
         case [b"PING"]:
-            response = "PONG"
+            if not is_replica_conn:
+                response = "PONG"
         case [b"ECHO", s]:
             response = s
         case [b"GET", k]:
@@ -250,8 +252,8 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"REPLCONF", b"capa", b"psync2"]:
             response = "OK"
         case [b"REPLCONF", b"GETACK", b"*"]:
-            print("processed repl conf")
-            response = ["REPLCONF", "ACK", "0"]
+            print(processed_bytes, get_processed_bytes())
+            response = [b'REPLCONF', b'ACK', str(get_processed_bytes()).encode()]
         case [b"PSYNC", replid, offset]:
             response = "custom"
             conn.send (encode_resp(
@@ -260,12 +262,8 @@ master_repl_offset:{replication.master_repl_offset}
                 f"{replication.master_repl_offset}"
             ))
             conn.send(encode_resp(EMPTY_RDB, False))
-            # response = EMPTY_RDB
-            # response = ["REPLCONF", "GETACK", "*"])
+            # conn.send(b'*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n')
             replication.connected_replicas.append(conn)
-            # print('sent')
-        case [b"REPLCONF", b"GETACK", b"*"]:
-            response = ["REPLCONF", "ACK", "0"]
         case [b"DISCARD"]:
             if transaction_enabled[conn]:
                 transaction_enabled[conn] = False
@@ -413,6 +411,13 @@ master_repl_offset:{replication.master_repl_offset}
     return response
 
 
+def get_processed_bytes():
+    global processed_bytes
+    if processed_bytes - 37 < 0:
+        return 0
+    return processed_bytes - 37
+
+
 def queue_transaction(command: List, conn: socket.socket):
     global transaction_enabled, transactions
     if conn in transaction_enabled.keys() and transaction_enabled[conn] == True:
@@ -431,7 +436,7 @@ def handle_transaction(args: Args, conn: socket.socket, is_replica_conn: bool):
 
 
 def main(args: Args):
-    global db
+    global db, processed_bytes
     db = rdb_parser.read_file_and_construct_kvm(args.dir, args.dbfilename)
     server_socket = socket.create_server(
         ("localhost", args.port),
@@ -478,17 +483,24 @@ def main(args: Args):
         responses, _ = parse_next(master_conn.recv(65536))
         count = len(responses)
         while True:
+            # print("loop responses: ", responses)
             if count == 2:
-                print("1")
+                # print("1")
                 break
             if count > 2:
-                print("2")
+                # print("2")
                 for command in responses[2:]:
-                    handle_command(args, command, master_conn, False)
+                    print(encode_resp(command), len(encode_resp(command)))
+                    processed_bytes += len(encode_resp(command))
+                    response = handle_command(args, command, master_conn, False)
+                    print(response)
+                    print("encode : ",encode_resp(response))
+                    master_conn.send(encode_resp(response))
                 break
             else:
-                print("3")
-                responses, _ = parse_next(master_conn.recv(65536))
+                # print("3")
+                temp_resp, _ = parse_next(master_conn.recv(65536))
+                responses.extend(temp_resp)
                 count += len(responses)
 
         print("PSYNC response", responses)
