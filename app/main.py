@@ -28,52 +28,89 @@ class Args:
 
 def parse_single(data: bytes):
     """Parse a single RESP command from data"""
-    if not data or b"\r\n" not in data:
+    if not data:
         raise ValueError("Not enough data")
         
-    first, data = data.split(b"\r\n", 1)
-    match first[:1]:
+    first_byte = data[0:1]
+    
+    match first_byte:
         case b"*":
+            # Array - find the first \r\n
+            if b"\r\n" not in data:
+                raise ValueError("Not enough data")
+            first_line, remaining = data.split(b"\r\n", 1)
+            count = int(first_line[1:].decode())
+            
             value = []
-            l = int(first[1:].decode())
-            for _ in range(l):
-                item, data = parse_single(data)
+            for _ in range(count):
+                item, remaining = parse_single(remaining)
                 value.append(item)
-            return value, data
+            return value, remaining
+            
         case b"$":
-            l = int(first[1:].decode())
-            if l == -1:  # Null bulk string
-                return None, data
-            if len(data) < l + 2:  # Not enough data for content + \r\n
+            # Bulk string - find the first \r\n
+            if b"\r\n" not in data:
+                raise ValueError("Not enough data")
+            first_line, remaining = data.split(b"\r\n", 1)
+            length = int(first_line[1:].decode())
+            
+            if length == -1:  # Null bulk string
+                return None, remaining
+            if len(remaining) < length:  # Not enough data for content
                 raise ValueError("Not enough data for bulk string")
-            blk = data[:l]
-            data = data[l + 2:]  # Skip the content and \r\n
-            return blk, data
+            
+            blk = remaining[:length]
+            remaining = remaining[length:]
+            
+            # Check if next 2 bytes are \r\n and consume them if present
+            if remaining.startswith(b"\r\n"):
+                remaining = remaining[2:]
+            
+            return blk, remaining
 
         case b"+":
-            return first[1:].decode(), data
+            # Simple string - find the first \r\n
+            if b"\r\n" not in data:
+                raise ValueError("Not enough data")
+            first_line, remaining = data.split(b"\r\n", 1)
+            return first_line[1:].decode(), remaining
 
         case b":":
-            return int(first[1:].decode()), data
+            # Integer - find the first \r\n
+            if b"\r\n" not in data:
+                raise ValueError("Not enough data")
+            first_line, remaining = data.split(b"\r\n", 1)
+            return int(first_line[1:].decode()), remaining
 
         case b"-":
-            return first[1:].decode(), data
+            # Error - find the first \r\n
+            if b"\r\n" not in data:
+                raise ValueError("Not enough data")
+            first_line, remaining = data.split(b"\r\n", 1)
+            return first_line[1:].decode(), remaining
 
         case _:
-            raise RuntimeError(f"Parse not implemented: {first[:1]}")
+            raise RuntimeError(f"Parse not implemented: {first_byte}")
 
 def parse_next(data: bytes):
     """Parse all RESP commands from data and return list of commands"""
-    print("next_data", data)
+    print("next_data", data[:100] + b"..." if len(data) > 100 else data)
     commands = []
     remaining_data = data
     
-    while remaining_data and b"\r\n" in remaining_data:
+    while remaining_data:
+        if not remaining_data:
+            break
+        first_byte = remaining_data[0:1]
+        if first_byte not in [b"*", b"$", b"+", b":", b"-"]:
+            print(f"Unknown command start: {first_byte}, remaining: {remaining_data[:20]}...")
+            break
+            
         try:
             command, remaining_data = parse_single(remaining_data)
             commands.append(command)
+            print(f"Parsed command: {command}")
         except (ValueError, IndexError) as e:
-            # Not enough data for complete command, break and return what we have
             print(f"Parse error: {e}, stopping parse")
             break
     
