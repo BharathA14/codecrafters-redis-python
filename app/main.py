@@ -250,6 +250,7 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"REPLCONF", b"capa", b"psync2"]:
             response = "OK"
         case [b"REPLCONF", b"GETACK", b"*"]:
+            print("processed repl conf")
             response = ["REPLCONF", "ACK", "0"]
         case [b"PSYNC", replid, offset]:
             response = "custom"
@@ -472,14 +473,30 @@ def main(args: Args):
 
         # Handshake PSYNC
         master_conn.send(encode_resp([b"PSYNC", b"?", b"-1"]))
+
+        #Handling this since the tcp messages are broken in different permutations
         responses, _ = parse_next(master_conn.recv(65536))
-        resp = responses[0] if responses else None
-        print("PSYNC", resp)
+        count = len(responses)
+        while True:
+            if count == 2:
+                print("1")
+                break
+            if count > 2:
+                print("2")
+                for command in responses[2:]:
+                    handle_command(args, command, master_conn, False)
+                break
+            else:
+                print("3")
+                responses, _ = parse_next(master_conn.recv(65536))
+                count += len(responses)
+
+        print("PSYNC response", responses)
         # assert isinstance(resp, str)
         # assert resp.startswith("FULLRESYNC")
         # Receive db
-        responses, _ = parse_next(master_conn.recv(65536))
-        resp = responses[0] if responses else None
+        # responses, _ = parse_next(master_conn.recv(65536))
+        # resp = responses[0] if responses else None
         # print("DB", resp)
 
         t.start()
