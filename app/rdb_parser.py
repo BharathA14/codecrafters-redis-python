@@ -7,7 +7,7 @@ global_file_name =""
 
 @dataclasses.dataclass
 class Value:
-    value: Any
+    value: Any | Dict[Any, Any]
     expiry: Optional[datetime.datetime]
 
 

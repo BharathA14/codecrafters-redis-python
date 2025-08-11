@@ -30,9 +30,9 @@ def parse_single(data: bytes):
     """Parse a single RESP command from data"""
     if not data:
         raise ValueError("Not enough data")
-        
+
     first_byte = data[0:1]
-    
+
     match first_byte:
         case b"*":
             # Array - find the first \r\n
@@ -40,32 +40,32 @@ def parse_single(data: bytes):
                 raise ValueError("Not enough data")
             first_line, remaining = data.split(b"\r\n", 1)
             count = int(first_line[1:].decode())
-            
+
             value = []
             for _ in range(count):
                 item, remaining = parse_single(remaining)
                 value.append(item)
             return value, remaining
-            
+
         case b"$":
             # Bulk string - find the first \r\n
             if b"\r\n" not in data:
                 raise ValueError("Not enough data")
             first_line, remaining = data.split(b"\r\n", 1)
             length = int(first_line[1:].decode())
-            
+
             if length == -1:  # Null bulk string
                 return None, remaining
             if len(remaining) < length:  # Not enough data for content
                 raise ValueError("Not enough data for bulk string")
-            
+
             blk = remaining[:length]
             remaining = remaining[length:]
-            
+
             # Check if next 2 bytes are \r\n and consume them if present
             if remaining.startswith(b"\r\n"):
                 remaining = remaining[2:]
-            
+
             return blk, remaining
 
         case b"+":
@@ -97,7 +97,7 @@ def parse_next(data: bytes):
     print("next_data", data[:100] + b"..." if len(data) > 100 else data)
     commands = []
     remaining_data = data
-    
+
     while remaining_data:
         if not remaining_data:
             break
@@ -112,7 +112,7 @@ def parse_next(data: bytes):
         except (ValueError, IndexError) as e:
             print(f"Parse error: {e}, stopping parse")
             break
-    
+
     return commands, remaining_data
 
 
@@ -168,7 +168,7 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
         if is_replica_conn:
             processed_bytes += len(data)
         commands, data = parse_next(data)
-        
+
         for value in commands:
             trailing_crlf = True
 
@@ -285,7 +285,10 @@ master_repl_offset:{replication.master_repl_offset}
                 transactions[conn] = []
         case [b"TYPE",k]:
             if k in db.keys():
-                response = "string"
+                if isinstance(db[k].value, dict):
+                    response = "stream"
+                else:
+                    response = "string"
             else:
                 response = "none"
 
@@ -405,6 +408,14 @@ master_repl_offset:{replication.master_repl_offset}
                 )
                 if not is_replica_conn:
                     response = "OK"
+
+        case [b"XADD", key, seq, *kv]:
+            temp = dict()
+            for i in range(0, len(kv), 2):
+                temp[kv[i]] = kv[i + 1]
+            # Store consistently with other commands using rdb_parser.Value
+            db[key] = rdb_parser.Value(value=temp, expiry=None)
+            response = seq
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
@@ -529,14 +540,14 @@ if __name__ == "__main__":
     args.add_argument("--replicaof", required=False)
     args.add_argument("--dir", default=".")
     args.add_argument("--dbfilename", default="empty.rdb")
-    
+
     parsed_args = args.parse_args()
-    
+
     args = Args(
         port=parsed_args.port,
         replicaof=parsed_args.replicaof,
         dir=parsed_args.dir,
         dbfilename=parsed_args.dbfilename
     )
-    
+
     main(args)
