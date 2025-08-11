@@ -3,9 +3,8 @@ import socket
 import threading
 import datetime
 import argparse
-import time
 from datetime import timedelta
-from typing import Any, Dict, Optional, cast, List
+from typing import Any, Dict, Optional, List
 
 from app import rdb_parser
 
@@ -126,7 +125,7 @@ def encode_resp(
             b"\r\n" if trailing_crlf else b"",
         )
     if isinstance(data, str):
-        if data[0] == "-":
+        if data[0] == "-": # Error Messages
             return b"%b\r\n" % (data.encode(),)
         return b"+%b\r\n" % (data.encode(),)
     if isinstance(data, int):
@@ -345,7 +344,7 @@ master_repl_offset:{replication.master_repl_offset}
                     v.extend(db[k].value)
                     db[k].value = v
                 else:
-                    db[k] = rdb_parser.Value(value=v[::-1], expiry=None)
+                    db[k] = rdb_parser.Value(value=v[::-1], expiry=None, milliseconds=None, sequence=None)
                 if not is_replica_conn:
                     response = len(db[k].value)
 
@@ -356,7 +355,7 @@ master_repl_offset:{replication.master_repl_offset}
                 if k in db.keys():
                     db[k].value.extend(v)
                 else:
-                    db[k] = rdb_parser.Value(value=v, expiry=None)
+                    db[k] = rdb_parser.Value(value=v, expiry=None, milliseconds=None, sequence=None)
                 if not is_replica_conn:
                     response = len(db[k].value)
         case [b"LRANGE", k, s, e]:
@@ -381,6 +380,8 @@ master_repl_offset:{replication.master_repl_offset}
                 db[k] = rdb_parser.Value(
                     value=str(new_value).encode(),
                     expiry=None,
+                    milliseconds=None,
+                    sequence=None,
                 )
 
                 response = new_value
@@ -395,6 +396,8 @@ master_repl_offset:{replication.master_repl_offset}
                 db[k] = rdb_parser.Value(
                     value=v,
                     expiry=now + expiry_ms,
+                    milliseconds=None,
+                    sequence=None,
                 )
                 if not is_replica_conn:
                     response = "OK"
@@ -405,22 +408,44 @@ master_repl_offset:{replication.master_repl_offset}
                 db[k] = rdb_parser.Value(
                     value=v,
                     expiry=None,
+                    milliseconds=None,
+                    sequence=None,
                 )
                 if not is_replica_conn:
                     response = "OK"
 
-        case [b"XADD", key, seq, *kv]:
-            temp = dict()
-            for i in range(0, len(kv), 2):
-                temp[kv[i]] = kv[i + 1]
-            # Store consistently with other commands using rdb_parser.Value
-            db[key] = rdb_parser.Value(value=temp, expiry=None)
-            response = seq
+        case [b"XADD", key, sequence, *kv]:
+            m_second, seq = map(int, sequence.decode().split("-", 1))
+            err_msg = invalid_sequence(key, m_second, seq)
+            if err_msg!="":
+                response = err_msg
+            else:
+                temp = dict()
+                for i in range(0, len(kv), 2):
+                    temp[kv[i]] = kv[i + 1]
+                #Need to add value instead of replacing values
+                db[key] = rdb_parser.Value(
+                    value=temp, expiry=None, milliseconds=m_second, sequence=seq
+                )
+                response = sequence
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
     return response
 
+
+def invalid_sequence(key, m_second, seq) -> str:
+    global db
+    if m_second == 0 and seq == 0:
+            return "-ERR The ID specified in XADD must be greater than 0-0"
+
+    if key in db.keys():
+        if db[key].milliseconds > m_second:
+            return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
+        elif db[key].milliseconds == m_second:
+            if db[key].sequence >= seq:
+                return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
+    return ""
 
 def get_processed_bytes():
     global processed_bytes

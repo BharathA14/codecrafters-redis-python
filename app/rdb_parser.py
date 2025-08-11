@@ -9,6 +9,8 @@ global_file_name =""
 class Value:
     value: Any | Dict[Any, Any]
     expiry: Optional[datetime.datetime]
+    milliseconds: Optional[int]
+    sequence: Optional[int]
 
 
 def read_file_and_construct_kvm(file_dir:str, file_name: str) -> Dict[Any, Value]: 
