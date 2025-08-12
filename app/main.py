@@ -4,7 +4,7 @@ import threading
 import datetime
 import argparse
 from datetime import timedelta
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 
 from app import rdb_parser
 
@@ -208,6 +208,23 @@ def handle_blpop(k:str, t:datetime.datetime, conn: socket.socket):
                     conn.send(encode_resp([k,db[k].value[0]]))
                     db[k].value = db[k].value[1:]
                     return
+
+def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
+    global db
+    if key in db.keys():
+        if db[key].milliseconds == int(m_second):
+            return db[key].milliseconds, db[key].sequence + 1
+        else:
+            if seq != "*":
+                return int(m_second), int(seq)
+            return int(m_second), 0
+
+    else:
+        if m_second == "0":
+            return 0, 1
+        if seq != "*":
+            return int(m_second), int(seq)
+        return int(m_second), 0
 
 
 def handle_command(
@@ -415,11 +432,12 @@ master_repl_offset:{replication.master_repl_offset}
                     response = "OK"
 
         case [b"XADD", key, sequence, *kv]:
-            m_second, seq = map(int, sequence.decode().split("-", 1))
+            m_second, seq = sequence.decode().split("-", 1)
             err_msg = invalid_sequence(key, m_second, seq)
             if err_msg!="":
                 response = err_msg
             else:
+                m_second, seq = generate_sequence(key,m_second, seq)
                 temp = dict()
                 for i in range(0, len(kv), 2):
                     temp[kv[i]] = kv[i + 1]
@@ -427,7 +445,7 @@ master_repl_offset:{replication.master_repl_offset}
                 db[key] = rdb_parser.Value(
                     value=temp, expiry=None, milliseconds=m_second, sequence=seq
                 )
-                response = sequence
+                response = str(m_second)+"-"+str(seq)
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
@@ -436,6 +454,14 @@ master_repl_offset:{replication.master_repl_offset}
 
 def invalid_sequence(key, m_second, seq) -> str:
     global db
+    if m_second != "*" and seq == "*":
+        m_second = int(m_second)
+        if key in db.keys():
+            if db[key].milliseconds > m_second:
+                return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
+        return ""
+
+    m_second, seq = int(m_second), int(seq)
     if m_second == 0 and seq == 0:
             return "-ERR The ID specified in XADD must be greater than 0-0"
 
