@@ -219,10 +219,10 @@ def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
         return round(time.time() * 1000), 0
 
     if key in db.keys():
-        if db[key].value.milliseconds == int(m_second):
+        if db[key].value[-1].milliseconds == int(m_second):
             if seq == "*":
-                return db[key].value.milliseconds, db[key].value.sequence + 1
-            return db[key].value.milliseconds, int(seq)
+                return db[key].value[-1].milliseconds, db[key].value[-1].sequence + 1
+            return db[key].value[-1].milliseconds, int(seq)
         else:
             if seq != "*":
                 return int(m_second), int(seq)
@@ -311,7 +311,7 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"TYPE",k]:
             if k in db.keys():
                 print(type(db[k].value))
-                if isinstance(db[k].value, XADDValue):
+                if isinstance(db[k].value, list) and len(db[k].value) > 0 and isinstance(db[k].value[-1], XADDValue):
                     response = "stream"
                 else:
                     response = "string"
@@ -433,10 +433,7 @@ master_repl_offset:{replication.master_repl_offset}
                     response = "OK"
 
         case [b"XADD", key, sequence, *kv]:
-            if len(sequence) == 1 and sequence.decode() == "*":
-                m_second, seq = "" , ""
-            else:
-                m_second, seq = sequence.decode().split("-")
+            m_second, seq = extract_msec_and_sequence(sequence.decode())
 
             err_msg = invalid_sequence(key, m_second, seq)
             if err_msg!="":
@@ -449,13 +446,64 @@ master_repl_offset:{replication.master_repl_offset}
                 xadd_value = XADDValue(
                     value=temp, milliseconds=int(m_second), sequence=seq
                 )
+
+                values_list: List[XADDValue] = []
+                existing = db.get(key)
+                if existing is not None and isinstance(existing.value, list):
+                    values_list = existing.value  # type: ignore[assignment]
+                values_list.append(xadd_value)
                 # Need to add value instead of replacing values
-                db[key] = rdb_parser.Value(value=xadd_value,expiry=None)
+                db[key] = rdb_parser.Value(value=values_list, expiry=None)
                 response = f"{m_second}-{seq}".encode()
+        case [b"XRANGE", k, start, end]:
+            if k not in db or not isinstance(db[k].value, list):
+                response = []
+            else:
+                start_id = start.decode()
+                end_id = end.decode()
+
+                if start_id == "-":
+                    start_m_second, start_seq = -1, -1
+                else:
+                    s_ms, s_seq = extract_msec_and_sequence(start_id)
+                    start_m_second, start_seq = int(s_ms), int(s_seq)
+
+                if end_id == "+":
+                    end_m_second, end_seq = 2**63 - 1, 2**31 - 1
+                else:
+                    e_ms, e_seq = extract_msec_and_sequence(end_id)
+                    end_m_second, end_seq = int(e_ms), int(e_seq)
+
+                result: List[Any] = []
+                for item in db[k].value:  # type: ignore[index]
+                    if not isinstance(item, XADDValue):
+                        continue
+                    ms = int(item.milliseconds)
+                    sq = int(item.sequence)
+                    in_lower = (ms > start_m_second) or (ms == start_m_second and sq >= start_seq)
+                    in_upper = (ms < end_m_second) or (ms == end_m_second and sq <= end_seq)
+                    if in_lower and in_upper:
+                        entry_id = f"{ms}-{sq}".encode()
+                        fields_and_values: List[Any] = []
+                        for f, v in item.value.items():
+                            fields_and_values.append(f)
+                            fields_and_values.append(v)
+                        result.append([entry_id, fields_and_values])
+                response = result
+
+
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
     return response
+
+
+def extract_msec_and_sequence(sequence:str):
+    if len(sequence) == 1 and sequence == "*":
+        m_second, seq = "", ""
+    else:
+        m_second, seq = sequence.split("-")
+    return m_second, seq
 
 
 def invalid_sequence(key, m_second, seq) -> str:
@@ -464,7 +512,7 @@ def invalid_sequence(key, m_second, seq) -> str:
         if seq == "*":
             m_second = int(m_second)
             if key in db.keys():
-                if db[key].value.milliseconds > m_second:
+                if db[key].value[-1].milliseconds > m_second:
                     return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
             return ""
 
@@ -476,10 +524,10 @@ def invalid_sequence(key, m_second, seq) -> str:
             return "-ERR The ID specified in XADD must be greater than 0-0"
 
     if key in db.keys():
-        if db[key].value.milliseconds > m_second:
+        if db[key].value[-1].milliseconds > m_second:
             return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
-        elif db[key].value.milliseconds == m_second:
-            if db[key].value.sequence >= seq:
+        elif db[key].value[-1].milliseconds == m_second:
+            if db[key].value[-1].sequence >= seq:
                 return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
     return ""
 

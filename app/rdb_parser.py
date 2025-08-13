@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import datetime
 import dataclasses
 
@@ -13,7 +13,7 @@ class XADDValue:
 
 @dataclasses.dataclass
 class Value:
-    value: Any | XADDValue
+    value: Any | List[XADDValue]
     expiry: Optional[datetime.datetime]
 
 
