@@ -3,6 +3,7 @@ import socket
 import threading
 import datetime
 import argparse
+import time
 from datetime import timedelta
 from typing import Any, Dict, Optional, List, Tuple
 
@@ -210,10 +211,17 @@ def handle_blpop(k:str, t:datetime.datetime, conn: socket.socket):
                     return
 
 def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
+    # Lock and unlock for a single thread to allow unique sequences only
     global db
+
+    if m_second == "":
+        return round(time.time() * 1000), 0
+
     if key in db.keys():
         if db[key].milliseconds == int(m_second):
-            return db[key].milliseconds, db[key].sequence + 1
+            if seq == "*":
+                return db[key].milliseconds, db[key].sequence + 1
+            return db[key].milliseconds, int(seq)
         else:
             if seq != "*":
                 return int(m_second), int(seq)
@@ -233,7 +241,7 @@ def handle_command(
     conn: socket.socket,
     is_replica_conn: bool = False,
     trailing_crlf: bool = True,
-) -> str | None | List[Any]:
+) -> bytes | str | None | List[Any]:
     global transaction_enabled, transactions
     response = "custom"
     print("handle_command", value, is_replica_conn)
@@ -432,7 +440,11 @@ master_repl_offset:{replication.master_repl_offset}
                     response = "OK"
 
         case [b"XADD", key, sequence, *kv]:
-            m_second, seq = sequence.decode().split("-", 1)
+            if len(sequence) == 1 and sequence.decode() == "*":
+                m_second, seq = "" , ""
+            else:
+                m_second, seq = sequence.decode().split("-")
+
             err_msg = invalid_sequence(key, m_second, seq)
             if err_msg!="":
                 response = err_msg
@@ -445,7 +457,7 @@ master_repl_offset:{replication.master_repl_offset}
                 db[key] = rdb_parser.Value(
                     value=temp, expiry=None, milliseconds=m_second, sequence=seq
                 )
-                response = str(m_second)+"-"+str(seq)
+                response = f"{m_second}-{seq}".encode()
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
@@ -454,11 +466,15 @@ master_repl_offset:{replication.master_repl_offset}
 
 def invalid_sequence(key, m_second, seq) -> str:
     global db
-    if m_second != "*" and seq == "*":
-        m_second = int(m_second)
-        if key in db.keys():
-            if db[key].milliseconds > m_second:
-                return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
+    if m_second != "":
+        if seq == "*":
+            m_second = int(m_second)
+            if key in db.keys():
+                if db[key].milliseconds > m_second:
+                    return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
+            return ""
+
+    if m_second == "":
         return ""
 
     m_second, seq = int(m_second), int(seq)
