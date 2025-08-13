@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import Any, Dict, Optional, List, Tuple
 
 from app import rdb_parser
+from app.rdb_parser import XADDValue
 
 EMPTY_RDB = bytes.fromhex(
     "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
@@ -218,10 +219,10 @@ def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
         return round(time.time() * 1000), 0
 
     if key in db.keys():
-        if db[key].milliseconds == int(m_second):
+        if db[key].value.milliseconds == int(m_second):
             if seq == "*":
-                return db[key].milliseconds, db[key].sequence + 1
-            return db[key].milliseconds, int(seq)
+                return db[key].value.milliseconds, db[key].value.sequence + 1
+            return db[key].value.milliseconds, int(seq)
         else:
             if seq != "*":
                 return int(m_second), int(seq)
@@ -309,7 +310,8 @@ master_repl_offset:{replication.master_repl_offset}
                 transactions[conn] = []
         case [b"TYPE",k]:
             if k in db.keys():
-                if isinstance(db[k].value, dict):
+                print(type(db[k].value))
+                if isinstance(db[k].value, XADDValue):
                     response = "stream"
                 else:
                     response = "string"
@@ -369,7 +371,7 @@ master_repl_offset:{replication.master_repl_offset}
                     v.extend(db[k].value)
                     db[k].value = v
                 else:
-                    db[k] = rdb_parser.Value(value=v[::-1], expiry=None, milliseconds=None, sequence=None)
+                    db[k] = rdb_parser.Value(value=v[::-1], expiry=None)
                 if not is_replica_conn:
                     response = len(db[k].value)
 
@@ -380,7 +382,7 @@ master_repl_offset:{replication.master_repl_offset}
                 if k in db.keys():
                     db[k].value.extend(v)
                 else:
-                    db[k] = rdb_parser.Value(value=v, expiry=None, milliseconds=None, sequence=None)
+                    db[k] = rdb_parser.Value(value=v, expiry=None)
                 if not is_replica_conn:
                     response = len(db[k].value)
         case [b"LRANGE", k, s, e]:
@@ -405,8 +407,6 @@ master_repl_offset:{replication.master_repl_offset}
                 db[k] = rdb_parser.Value(
                     value=str(new_value).encode(),
                     expiry=None,
-                    milliseconds=None,
-                    sequence=None,
                 )
 
                 response = new_value
@@ -421,8 +421,6 @@ master_repl_offset:{replication.master_repl_offset}
                 db[k] = rdb_parser.Value(
                     value=v,
                     expiry=now + expiry_ms,
-                    milliseconds=None,
-                    sequence=None,
                 )
                 if not is_replica_conn:
                     response = "OK"
@@ -430,12 +428,7 @@ master_repl_offset:{replication.master_repl_offset}
             if not queue_transaction(value, conn):
                 for rep in replication.connected_replicas:
                     rep.send(encode_resp(value))
-                db[k] = rdb_parser.Value(
-                    value=v,
-                    expiry=None,
-                    milliseconds=None,
-                    sequence=None,
-                )
+                db[k] = rdb_parser.Value(value=v, expiry=None)
                 if not is_replica_conn:
                     response = "OK"
 
@@ -453,10 +446,11 @@ master_repl_offset:{replication.master_repl_offset}
                 temp = dict()
                 for i in range(0, len(kv), 2):
                     temp[kv[i]] = kv[i + 1]
-                #Need to add value instead of replacing values
-                db[key] = rdb_parser.Value(
-                    value=temp, expiry=None, milliseconds=m_second, sequence=seq
+                xadd_value = XADDValue(
+                    value=temp, milliseconds=int(m_second), sequence=seq
                 )
+                # Need to add value instead of replacing values
+                db[key] = rdb_parser.Value(value=xadd_value,expiry=None)
                 response = f"{m_second}-{seq}".encode()
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
@@ -470,7 +464,7 @@ def invalid_sequence(key, m_second, seq) -> str:
         if seq == "*":
             m_second = int(m_second)
             if key in db.keys():
-                if db[key].milliseconds > m_second:
+                if db[key].value.milliseconds > m_second:
                     return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
             return ""
 
@@ -482,10 +476,10 @@ def invalid_sequence(key, m_second, seq) -> str:
             return "-ERR The ID specified in XADD must be greater than 0-0"
 
     if key in db.keys():
-        if db[key].milliseconds > m_second:
+        if db[key].value.milliseconds > m_second:
             return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
-        elif db[key].milliseconds == m_second:
-            if db[key].sequence >= seq:
+        elif db[key].value.milliseconds == m_second:
+            if db[key].value.sequence >= seq:
                 return "-ERR The ID specified in XADD is equal or smaller than the target stream top item"
     return ""
 

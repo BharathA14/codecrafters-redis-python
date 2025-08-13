@@ -6,14 +6,18 @@ global_file_dir = "" # do we need this
 global_file_name =""
 
 @dataclasses.dataclass
-class Value:
-    value: Any | Dict[Any, Any]
-    expiry: Optional[datetime.datetime]
+class XADDValue:
+    value: Any
     milliseconds: Optional[int]
     sequence: Optional[int]
 
+@dataclasses.dataclass
+class Value:
+    value: Any | XADDValue
+    expiry: Optional[datetime.datetime]
 
-def read_file_and_construct_kvm(file_dir:str, file_name: str) -> Dict[Any, Value]: 
+
+def read_file_and_construct_kvm(file_dir: str, file_name: str) -> Dict[Any, Value]:
     rdb_dict = {}
 
     global global_file_dir, global_file_name
@@ -48,12 +52,13 @@ def read_file_and_construct_kvm(file_dir:str, file_name: str) -> Dict[Any, Value
                     if expiry_type =="ms":
                         expiry_value /= 1000 # type: ignore
                     entry.expiry = expiry_value
-            
+
                 rdb_dict[key.decode()] = entry
         return rdb_dict
     except Exception as e:
         print(e)
         return {}
+
 
 def read_length(buf, pos):
     """Read Redis-style length-encoded field starting at pos"""
@@ -98,7 +103,7 @@ def read_expiry(buf, pos) -> tuple:
         return "s", expiry_value, pos + 5
     else:
         return None, None, pos  # No expiry
-    
+
 def send_rdb_file() -> bytes: 
     with open(global_file_dir+"/"+global_file_name, "rb") as f:
         buf = f.read()
