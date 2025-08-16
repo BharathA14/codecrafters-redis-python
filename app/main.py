@@ -17,6 +17,8 @@ transaction_enabled = {}
 transactions = {}
 bl_pop_queue = {} # {key: [conn,...] }
 bl_pop_lock = threading.Lock()
+xread_block_queue = {} # {key: [{'conn': conn, 'keys': keys, 'expiry': time, 'event': threading.Event()}, ...]}
+xread_lock = threading.Lock()
 processed_bytes = 0
 
 @dataclasses.dataclass
@@ -218,7 +220,6 @@ def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
         return round(time.time() * 1000), 0
 
     if key in db.keys():
-        print("e")
         if db[key].value[-1].milliseconds == int(m_second):
             if seq == "*":
                 return db[key].value[-1].milliseconds, db[key].value[-1].sequence + 1
@@ -311,7 +312,6 @@ master_repl_offset:{replication.master_repl_offset}
                 transactions[conn] = []
         case [b"TYPE",k]:
             if k in db.keys():
-                print(type(db[k].value))
                 if isinstance(db[k].value, list) and len(db[k].value) > 0 and isinstance(db[k].value[-1], XADDValue):
                     response = "stream"
                 else:
@@ -454,6 +454,10 @@ master_repl_offset:{replication.master_repl_offset}
                 values_list.append(xadd_value)
                 # Need to add value instead of replacing values
                 db[key] = rdb_parser.Value(value=values_list, expiry=None)
+                
+                # Notify any blocking XREAD operations for this key
+                notify_blocking_xread(key)
+                
                 response = f"{m_second}-{seq}".encode()
         case [b"XRANGE", k, start, end]:
             if k not in db or not isinstance(db[k].value, list):
@@ -492,33 +496,128 @@ master_repl_offset:{replication.master_repl_offset}
                 response = result
 
         case [b"XREAD", b"streams", *key_and_sequence]:
-            keys, values = extract_key_and_sequence(key_and_sequence)
-            temp_key = []
-            temp_response = []
+            response = handle_xread(key_and_sequence)
 
-            for key, value in zip(keys, values):
-                db_value = db[key].value
-                m_second, seq = extract_msec_and_sequence(value.decode())
-                for val in db_value:
-                    if int(m_second) <= val.milliseconds and int(seq) <= val.sequence:
-                        temp = []
-                        for k , v in val.value.items():
-                            temp.extend([k,v])
-                        temp_key.append([str(val.milliseconds)+"-"+str(val.sequence), temp])
-
-                temp_response.append([key, temp_key])
-                temp_key = []
-
-            response = temp_response
-            print(response)
+        case [b"XREAD", b"block", expiry_ms, b"streams", *key_and_sequence]:
+            resp = handle_xread(key_and_sequence, blocking=True)
+            if resp:
+                response = resp
+            else:
+                response = "custom"
+                keys, _ = extract_key_and_sequence(key_and_sequence)
+                block_event = threading.Event()
+                
+                with xread_lock:
+                    for key in keys:
+                        if key not in xread_block_queue:
+                            xread_block_queue[key] = []
+                        xread_block_queue[key].append({
+                            'conn': conn,
+                            'keys': key_and_sequence,
+                            'expiry': time.time() + (int(expiry_ms.decode()) / 1000),
+                            'event': block_event
+                        })
+                
+                threading.Thread(
+                    target=handle_xread_block,
+                    args=(conn, key_and_sequence, int(expiry_ms.decode()) / 1000, block_event),
+                    daemon=True
+                ).start()
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
     return response
 
+
+def handle_xread(key_and_sequence, blocking=False):
+    global db
+    keys, values = extract_key_and_sequence(key_and_sequence)
+    response = []
+    
+    for key, value in zip(keys, values):
+        if key in db.keys():
+            db_value = db[key].value
+            sequence_str = value.decode()
+            m_second, seq = extract_msec_and_sequence(sequence_str)
+
+            target_ms = int(m_second) if m_second else 0
+            target_seq = int(seq) if seq else 0
+            
+            temp_key = []
+            for val in db_value:
+                if not isinstance(val, XADDValue):
+                    continue
+                    
+                val_ms = int(val.milliseconds)
+                val_seq = int(val.sequence)
+                
+                if (val_ms > target_ms) or (val_ms == target_ms and val_seq > target_seq):
+                    temp = []
+                    for k, v in val.value.items():
+                        temp.extend([k, v])
+                    entry_id = f"{val_ms}-{val_seq}".encode()
+                    temp_key.append([entry_id, temp])
+            
+            if temp_key:
+                if blocking:
+                    response.append([key, [temp_key[-1]]])
+                else:
+                    response.append([key, temp_key])
+
+    return response
+
 def extract_key_and_sequence(key_and_sequence: list) -> tuple[list[Any], list[Any]]:
     return key_and_sequence[0:len(key_and_sequence)//2], key_and_sequence[len(key_and_sequence)//2:]
+
+
+def handle_xread_block(conn: socket.socket, key_and_sequence: list, timeout: float, block_event: threading.Event):
+    global xread_block_queue
+    
+    if block_event.wait(timeout=timeout):
+        resp = handle_xread(key_and_sequence, blocking=True)
+        if resp:
+            print("resp: ", resp)
+            encoded_resp = encode_resp(resp)
+            conn.send(encoded_resp)
+    else:
+        encoded_resp = encode_resp(None)
+        conn.send(encoded_resp)
+    
+    remove_from_xread_queues(conn)
+
+
+def remove_from_xread_queues(conn: socket.socket):
+    """Remove a connection from all XREAD blocking queues"""
+    global xread_block_queue
+    
+    with xread_lock:
+        for key in list(xread_block_queue.keys()):
+            for op in xread_block_queue[key]:
+                if op['conn'] == conn:
+                    op['event'].set()
+            
+            xread_block_queue[key] = [op for op in xread_block_queue[key] if op['conn'] != conn]
+            if not xread_block_queue[key]:
+                del xread_block_queue[key]
+
+def notify_blocking_xread(key: bytes):
+    """Notify any blocking XREAD operations when new entries are added"""
+    global xread_block_queue
+    
+    if key not in xread_block_queue:
+        return
+    
+    with xread_lock:
+        operations = xread_block_queue[key][:]  # Copy list to avoid modification during iteration
+        
+        for operation in operations:
+            resp = handle_xread(operation['keys'], blocking=True)
+            if resp:
+                operation['event'].set()
+        
+        if not xread_block_queue[key]:
+            del xread_block_queue[key]
 
 def extract_msec_and_sequence(sequence:str):
     if len(sequence) == 1 and sequence == "*":
