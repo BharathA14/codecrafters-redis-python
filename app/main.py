@@ -491,6 +491,19 @@ master_repl_offset:{replication.master_repl_offset}
                         result.append([entry_id, fields_and_values])
                 response = result
 
+        case [b"XREAD", b"streams", key, sequence]:
+            db_value = db[key].value
+            m_second, seq = extract_msec_and_sequence(sequence.decode())
+            print(m_second, seq)
+            temp_response = []
+            for val in db_value:
+                if int(m_second) <= val.milliseconds and int(seq) <= val.sequence:
+                    temp = []
+                    for k , v in val.value.items():
+                        temp.extend([k,v])
+                    temp_response.append([str(val.milliseconds)+"-"+str(val.sequence), temp])
+            response = [[key, temp_response]]
+            print(response)
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
