@@ -212,13 +212,13 @@ def handle_blpop(k:str, t:datetime.datetime, conn: socket.socket):
                     return
 
 def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
-    # Lock and unlock for a single thread to allow unique sequences only
     global db
 
     if m_second == "":
         return round(time.time() * 1000), 0
 
     if key in db.keys():
+        print("e")
         if db[key].value[-1].milliseconds == int(m_second):
             if seq == "*":
                 return db[key].value[-1].milliseconds, db[key].value[-1].sequence + 1
@@ -227,9 +227,10 @@ def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
             if seq != "*":
                 return int(m_second), int(seq)
             return int(m_second), 0
-
     else:
         if m_second == "0":
+            if seq != "*":
+                return int(m_second), int(seq)
             return 0, 1
         if seq != "*":
             return int(m_second), int(seq)
@@ -434,7 +435,6 @@ master_repl_offset:{replication.master_repl_offset}
 
         case [b"XADD", key, sequence, *kv]:
             m_second, seq = extract_msec_and_sequence(sequence.decode())
-
             err_msg = invalid_sequence(key, m_second, seq)
             if err_msg!="":
                 response = err_msg
@@ -491,18 +491,25 @@ master_repl_offset:{replication.master_repl_offset}
                         result.append([entry_id, fields_and_values])
                 response = result
 
-        case [b"XREAD", b"streams", key, sequence]:
-            db_value = db[key].value
-            m_second, seq = extract_msec_and_sequence(sequence.decode())
-            print(m_second, seq)
+        case [b"XREAD", b"streams", *key_and_sequence]:
+            keys, values = extract_key_and_sequence(key_and_sequence)
+            temp_key = []
             temp_response = []
-            for val in db_value:
-                if int(m_second) <= val.milliseconds and int(seq) <= val.sequence:
-                    temp = []
-                    for k , v in val.value.items():
-                        temp.extend([k,v])
-                    temp_response.append([str(val.milliseconds)+"-"+str(val.sequence), temp])
-            response = [[key, temp_response]]
+
+            for key, value in zip(keys, values):
+                db_value = db[key].value
+                m_second, seq = extract_msec_and_sequence(value.decode())
+                for val in db_value:
+                    if int(m_second) <= val.milliseconds and int(seq) <= val.sequence:
+                        temp = []
+                        for k , v in val.value.items():
+                            temp.extend([k,v])
+                        temp_key.append([str(val.milliseconds)+"-"+str(val.sequence), temp])
+
+                temp_response.append([key, temp_key])
+                temp_key = []
+
+            response = temp_response
             print(response)
 
         case _:
@@ -510,6 +517,8 @@ master_repl_offset:{replication.master_repl_offset}
 
     return response
 
+def extract_key_and_sequence(key_and_sequence: list) -> tuple[list[Any], list[Any]]:
+    return key_and_sequence[0:len(key_and_sequence)//2], key_and_sequence[len(key_and_sequence)//2:]
 
 def extract_msec_and_sequence(sequence:str):
     if len(sequence) == 1 and sequence == "*":
