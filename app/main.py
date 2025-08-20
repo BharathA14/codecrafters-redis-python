@@ -500,7 +500,8 @@ master_repl_offset:{replication.master_repl_offset}
 
         case [b"XREAD", b"block", expiry_ms, b"streams", *key_and_sequence]:
             resp = handle_xread(key_and_sequence, blocking=True)
-            if resp:
+            print(key_and_sequence)
+            if resp and key_and_sequence[1].decode() != "$":
                 response = resp
             else:
                 response = "custom"
@@ -537,6 +538,7 @@ master_repl_offset:{replication.master_repl_offset}
 def handle_xread(key_and_sequence, blocking=False):
     global db
     keys, values = extract_key_and_sequence(key_and_sequence)
+    print(f"keys: {keys}, values: {values}")
     response = []
     
     for key, value in zip(keys, values):
@@ -623,7 +625,7 @@ def notify_blocking_xread(key: bytes):
             del xread_block_queue[key]
 
 def extract_msec_and_sequence(sequence:str):
-    if len(sequence) == 1 and sequence == "*":
+    if len(sequence) == 1 and (sequence == "*" or sequence == "$"):
         m_second, seq = "", ""
     else:
         m_second, seq = sequence.split("-")
