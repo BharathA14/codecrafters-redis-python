@@ -454,10 +454,10 @@ master_repl_offset:{replication.master_repl_offset}
                 values_list.append(xadd_value)
                 # Need to add value instead of replacing values
                 db[key] = rdb_parser.Value(value=values_list, expiry=None)
-                
+
                 # Notify any blocking XREAD operations for this key
                 notify_blocking_xread(key)
-                
+
                 response = f"{m_second}-{seq}".encode()
         case [b"XRANGE", k, start, end]:
             if k not in db or not isinstance(db[k].value, list):
@@ -506,7 +506,11 @@ master_repl_offset:{replication.master_repl_offset}
                 response = "custom"
                 keys, _ = extract_key_and_sequence(key_and_sequence)
                 block_event = threading.Event()
-                
+                expiry_ms_decode = int(expiry_ms.decode())
+                if expiry_ms_decode:
+                    expiry = (int(expiry_ms.decode()) / 1000)
+                else:
+                    expiry = None
                 with xread_lock:
                     for key in keys:
                         if key not in xread_block_queue:
@@ -514,13 +518,13 @@ master_repl_offset:{replication.master_repl_offset}
                         xread_block_queue[key].append({
                             'conn': conn,
                             'keys': key_and_sequence,
-                            'expiry': time.time() + (int(expiry_ms.decode()) / 1000),
+                            'expiry': expiry,
                             'event': block_event
                         })
-                
+
                 threading.Thread(
                     target=handle_xread_block,
-                    args=(conn, key_and_sequence, int(expiry_ms.decode()) / 1000, block_event),
+                    args=(conn, key_and_sequence, expiry, block_event),
                     daemon=True
                 ).start()
 
@@ -577,7 +581,6 @@ def handle_xread_block(conn: socket.socket, key_and_sequence: list, timeout: flo
     if block_event.wait(timeout=timeout):
         resp = handle_xread(key_and_sequence, blocking=True)
         if resp:
-            print("resp: ", resp)
             encoded_resp = encode_resp(resp)
             conn.send(encoded_resp)
     else:
