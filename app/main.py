@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, List, Tuple
 
 from app import rdb_parser
 from app.rdb_parser import XADDValue
+import heapq
 
 EMPTY_RDB = bytes.fromhex(
     "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
@@ -20,6 +21,7 @@ bl_pop_lock = threading.Lock()
 xread_block_queue = {} # {key: [{'conn': conn, 'keys': keys, 'expiry': time, 'event': threading.Event()}, ...]}
 xread_lock = threading.Lock()
 processed_bytes = 0
+sorted_set_dict = {} # {key: [], ...}
 
 @dataclasses.dataclass
 class Args:
@@ -528,6 +530,15 @@ master_repl_offset:{replication.master_repl_offset}
                     args=(conn, key_and_sequence, expiry, block_event),
                     daemon=True
                 ).start()
+
+        case [b"ZADD", zset_key, value, zset_member]:
+            global sorted_set_dict
+            if zset_key in sorted_set_dict.keys():
+                heapq.heappush(sorted_set_dict[zset_key], [value, zset_member])
+            else:
+                sorted_set_dict[zset_key] = []
+                heapq.heappush(sorted_set_dict[zset_key], [value, zset_member])
+            response = len(sorted_set_dict[zset_key])
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
