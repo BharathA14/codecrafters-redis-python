@@ -533,12 +533,23 @@ master_repl_offset:{replication.master_repl_offset}
 
         case [b"ZADD", zset_key, value, zset_member]:
             global sorted_set_dict
+            print(zset_key, value)
             if zset_key in sorted_set_dict.keys():
-                heapq.heappush(sorted_set_dict[zset_key], [value, zset_member])
+                for i in range(len(sorted_set_dict[zset_key])):
+                    v ,k = sorted_set_dict[zset_key][i]
+                    print(k, zset_member)
+                    if k == zset_member:
+                        response = 0
+                        sorted_set_dict[zset_key][i] = [float(value.decode()), zset_member]
+                        heapq.heapify(sorted_set_dict[zset_key])
+                        break
+                if response != 0:
+                    heapq.heappush(sorted_set_dict[zset_key], [float(value.decode()), zset_member])
+                    response = 1
             else:
                 sorted_set_dict[zset_key] = []
-                heapq.heappush(sorted_set_dict[zset_key], [value, zset_member])
-            response = len(sorted_set_dict[zset_key])
+                heapq.heappush(sorted_set_dict[zset_key], [float(value.decode()), zset_member])
+                response = 1
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
