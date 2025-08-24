@@ -23,14 +23,6 @@ xread_lock = threading.Lock()
 processed_bytes = 0
 sorted_set_dict = {} # {key: [], ...}
 
-def new_cmp_lt(a,b):
-    if a[0] == b[0]:
-        return a[1] < b[1]
-    else:
-        return a[0] < b[0]
-
-heapq.cmp_lt = new_cmp_lt
-
 @dataclasses.dataclass
 class Args:
     port: int
@@ -557,16 +549,16 @@ master_repl_offset:{replication.master_repl_offset}
                     v, k = sorted_set_dict[zset_key][i]
                     if k == zset_member:
                         response = 0
-                        sorted_set_dict[zset_key][i] = [float(value.decode()), zset_member]
+                        sorted_set_dict[zset_key][i] = (float(value.decode()), zset_member)
                         heapq.heapify(sorted_set_dict[zset_key])
                         member_found = True
                         break
                 if not member_found:
-                    heapq.heappush(sorted_set_dict[zset_key], [float(value.decode()), zset_member])
+                    heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), zset_member))
                     response = 1
             else:
                 sorted_set_dict[zset_key] = []
-                heapq.heappush(sorted_set_dict[zset_key], [float(value.decode()), zset_member])
+                heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), zset_member))
                 response = 1
             print(sorted_set_dict[zset_key])
 
