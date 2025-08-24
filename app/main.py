@@ -532,14 +532,22 @@ master_repl_offset:{replication.master_repl_offset}
                 ).start()
 
         case [b"ZRANK", zset_key, zset_member]:
+            popped_elements = []
             if zset_key in sorted_set_dict:
-                for i, member in enumerate(sorted_set_dict[zset_key]):
-                    if member[1] == zset_member:
+                i = 0
+                while len(sorted_set_dict[zset_key]) != 0:
+                    elem = heapq.heappop(sorted_set_dict[zset_key])
+                    popped_elements.append(elem)
+                    if elem[1] == zset_member:
                         response = i
+                        push_elements_to_sorted_set(popped_elements, sorted_set_dict, zset_key)
                         break
+                    i += 1
                 else:
+                    push_elements_to_sorted_set(popped_elements, sorted_set_dict, zset_key)
                     response = None
             else:
+                push_elements_to_sorted_set(popped_elements, sorted_set_dict, zset_key)
                 response = None
 
         case [b"ZRANGE", zset_key, start_index, end_index]:
@@ -552,18 +560,19 @@ master_repl_offset:{replication.master_repl_offset}
                 values = sorted_set_dict[zset_key]
                 # if start_index > len(values):
                 #     response = []
+                popped_elements, response = [], []
+                start_index, end_index = handle_neg_index(int(start_index), int(end_index), len(values))
                 if end_index > len(values):
                     end_index = len(values)
                 else:
                     end_index += 1
-                popped_elements, response = [], []
+                print("s, e index:",start_index," ", end_index)
                 for i in range(0, end_index):
                     ele = heapq.heappop(sorted_set_dict[zset_key])
                     popped_elements.append(ele)
                     if i >= start_index:
                         response.append(ele[1])
-                for i in popped_elements:
-                    heapq.heappush(sorted_set_dict[zset_key], i)
+                push_elements_to_sorted_set(popped_elements, sorted_set_dict, zset_key)
 
         case [b"ZADD", zset_key, value, zset_member]:
             if zset_key in sorted_set_dict:
@@ -589,6 +598,11 @@ master_repl_offset:{replication.master_repl_offset}
             raise RuntimeError(f"Command not implemented: {value}")
 
     return response
+
+
+def push_elements_to_sorted_set(popped_elements, sorted_set_dict, zset_key):
+    for ele in popped_elements:
+        heapq.heappush(sorted_set_dict[zset_key], ele)
 
 
 def handle_xread(key_and_sequence, blocking=False):
