@@ -138,13 +138,13 @@ def encode_resp(
         return b":%b\r\n" % (str(data).encode())
     if data is None:
         return b"$-1\r\n"
-    if isinstance(data, list):
+    if isinstance(data, list) or isinstance(data, tuple):
         return b"*%b\r\n%b" % (
             str(len(data)).encode(),
             b"".join(map(encode_resp, data)),
         )
 
-    raise RuntimeError(f"Encode not implemented: {data}")
+    raise RuntimeError(f"Encode not implemented: {data}, {type(data)}")
 
 
 db: Dict[Any, rdb_parser.Value] = {}
@@ -541,6 +541,29 @@ master_repl_offset:{replication.master_repl_offset}
                     response = None
             else:
                 response = None
+
+        case [b"ZRANGE", zset_key, start_index, end_index]:
+            start_index, end_index = map(int, (start_index, end_index))
+            if start_index > end_index:
+                response = []
+            elif zset_key not in sorted_set_dict:
+                response = []
+            else:
+                values = sorted_set_dict[zset_key]
+                # if start_index > len(values):
+                #     response = []
+                if end_index > len(values):
+                    end_index = len(values)
+                else:
+                    end_index += 1
+                popped_elements, response = [], []
+                for i in range(0, end_index):
+                    ele = heapq.heappop(sorted_set_dict[zset_key])
+                    popped_elements.append(ele)
+                    if i >= start_index:
+                        response.append(ele[1])
+                for i in popped_elements:
+                    heapq.heappush(sorted_set_dict[zset_key], i)
 
         case [b"ZADD", zset_key, value, zset_member]:
             if zset_key in sorted_set_dict:
