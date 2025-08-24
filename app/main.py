@@ -23,6 +23,14 @@ xread_lock = threading.Lock()
 processed_bytes = 0
 sorted_set_dict = {} # {key: [], ...}
 
+def new_cmp_lt(a,b):
+    if a[0] == b[0]:
+        return a[1] < b[1]
+    else:
+        return a[0] < b[0]
+
+heapq.cmp_lt = new_cmp_lt
+
 @dataclasses.dataclass
 class Args:
     port: int
@@ -247,7 +255,7 @@ def handle_command(
     is_replica_conn: bool = False,
     trailing_crlf: bool = True,
 ) -> bytes | str | None | List[Any]:
-    global transaction_enabled, transactions
+    global transaction_enabled, transactions, sorted_set_dict
     response = "custom"
     print("handle_command", value, is_replica_conn)
     match value:
@@ -531,25 +539,36 @@ master_repl_offset:{replication.master_repl_offset}
                     daemon=True
                 ).start()
 
+        case [b"ZRANK", zset_key, zset_member]:
+            if zset_key in sorted_set_dict:
+                for i, member in enumerate(sorted_set_dict[zset_key]):
+                    if member[1] == zset_member:
+                        response = i
+                        break
+                else:
+                    response = None
+            else:
+                response = None
+
         case [b"ZADD", zset_key, value, zset_member]:
-            global sorted_set_dict
-            print(zset_key, value)
-            if zset_key in sorted_set_dict.keys():
+            if zset_key in sorted_set_dict:
+                member_found = False
                 for i in range(len(sorted_set_dict[zset_key])):
-                    v ,k = sorted_set_dict[zset_key][i]
-                    print(k, zset_member)
+                    v, k = sorted_set_dict[zset_key][i]
                     if k == zset_member:
                         response = 0
                         sorted_set_dict[zset_key][i] = [float(value.decode()), zset_member]
                         heapq.heapify(sorted_set_dict[zset_key])
+                        member_found = True
                         break
-                if response != 0:
+                if not member_found:
                     heapq.heappush(sorted_set_dict[zset_key], [float(value.decode()), zset_member])
                     response = 1
             else:
                 sorted_set_dict[zset_key] = []
                 heapq.heappush(sorted_set_dict[zset_key], [float(value.decode()), zset_member])
                 response = 1
+            print(sorted_set_dict[zset_key])
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
