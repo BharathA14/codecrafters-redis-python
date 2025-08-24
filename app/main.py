@@ -200,6 +200,12 @@ def handle_neg_index(s: int, e: int, list_len: int):
             e = list_len + e
         else:
             e = 0
+    if e >= list_len:
+        e = list_len - 1
+
+    if s >= list_len:
+        s = list_len - 1
+
     return s, e
 
 def handle_blpop(k:str, t:datetime.datetime, conn: socket.socket):
@@ -543,27 +549,30 @@ master_repl_offset:{replication.master_repl_offset}
                 response = None
 
         case [b"ZRANGE", zset_key, start_index, end_index]:
-            start_index, end_index = map(int, (start_index, end_index))
-            if start_index > end_index:
-                response = []
-            elif zset_key not in sorted_set_dict:
+            if zset_key not in sorted_set_dict:
                 response = []
             else:
-                values = sorted_set_dict[zset_key]
-                # if start_index > len(values):
-                #     response = []
-                if end_index > len(values):
-                    end_index = len(values)
+                start_index, end_index = map(int, (start_index, end_index))
+                start_index, end_index = handle_neg_index(start_index, end_index, len(sorted_set_dict[zset_key]))
+                print("s, e index:",start_index," ", end_index)
+
+                if start_index > end_index:
+                    response = []
                 else:
-                    end_index += 1
-                popped_elements, response = [], []
-                for i in range(0, end_index):
-                    ele = heapq.heappop(sorted_set_dict[zset_key])
-                    popped_elements.append(ele)
-                    if i >= start_index:
-                        response.append(ele[1])
-                for i in popped_elements:
-                    heapq.heappush(sorted_set_dict[zset_key], i)
+                    # if start_index > len(values):
+                    #     response = []
+                    # if end_index > len(values):
+                    #     end_index = len(values)
+                    # else:
+                    #     end_index += 1
+                    popped_elements, response = [], []
+                    for i in range(0, end_index+1):
+                        ele = heapq.heappop(sorted_set_dict[zset_key])
+                        popped_elements.append(ele)
+                        if i >= start_index:
+                            response.append(ele[1])
+                    for i in popped_elements:
+                        heapq.heappush(sorted_set_dict[zset_key], i)
 
         case [b"ZADD", zset_key, value, zset_member]:
             if zset_key in sorted_set_dict:
