@@ -582,6 +582,12 @@ master_repl_offset:{replication.master_repl_offset}
                     push_elements_to_sorted_set(
                         popped_elements, sorted_set_dict, zset_key
                     )
+        
+        case [b"ZCARD", zset_key]:
+            if zset_key in sorted_set_dict:
+                response = len(sorted_set_dict[zset_key])
+            else:
+                response = 0
 
         case [b"ZADD", zset_key, value, zset_member]:
             if zset_key in sorted_set_dict:
