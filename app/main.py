@@ -24,6 +24,7 @@ processed_bytes = 0
 sorted_set_dict = {} # {key: [], ...}
 subscribe_dict = {} # {channel: [conn, ...]}
 subscriber_dict = {} # {conn: [channel, ...]}
+subscriber_allowed_commands = [b"SUBSCRIBE", b"UNSUBSCRIBE", b"PUBLISH", b"PSUBSCRIBE", b"PUNSUBSCRIBE", b"PING", b"QUIT"]
 
 @dataclasses.dataclass
 class Args:
@@ -247,6 +248,13 @@ def generate_sequence(key, m_second, seq) -> Tuple[int, int]:
             return int(m_second), int(seq)
         return int(m_second), 0
 
+def handle_subscriber_command(value: List, conn: socket.socket):
+    global subscriber_dict, subscriber_allowed_commands
+    response = "custom"
+    if conn in subscriber_dict:
+        if value[0] not in subscriber_allowed_commands:
+            response = f"-ERR Can't execute '{value[0].decode()}' in subscribed mode"
+    return response
 
 def handle_command(
     args: Args,
@@ -255,12 +263,19 @@ def handle_command(
     is_replica_conn: bool = False,
     trailing_crlf: bool = True,
 ) -> bytes | str | None | List[Any]:
-    global transaction_enabled, transactions, sorted_set_dict, subscribe_dict
+    global transaction_enabled, transactions, sorted_set_dict, subscribe_dict, subscriber_dict
     response = "custom"
     print("handle_command", value, is_replica_conn)
+
+    response = handle_subscriber_command(value, conn)
+    if response != "custom":
+        return response
+
     match value:
         case [b"PING"]:
-            if not is_replica_conn:
+            if conn in subscriber_dict:
+                response = ["PONG",""]
+            elif not is_replica_conn:
                 response = "PONG"
         case [b"ECHO", s]:
             response = s
@@ -644,7 +659,7 @@ master_repl_offset:{replication.master_repl_offset}
                 subscribe_dict[channel] = set()
             if conn not in subscriber_dict:
                 subscriber_dict[conn] = 0
-                
+
             if conn not in subscribe_dict[channel]:
                 subscriber_dict[conn] += 1
                 response.append(subscriber_dict[conn])
