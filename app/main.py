@@ -23,6 +23,7 @@ xread_lock = threading.Lock()
 processed_bytes = 0
 sorted_set_dict = {} # {key: [], ...}
 subscribe_dict = {} # {channel: [conn, ...]}
+subscriber_dict = {} # {conn: [channel, ...]}
 
 @dataclasses.dataclass
 class Args:
@@ -641,11 +642,15 @@ master_repl_offset:{replication.master_repl_offset}
             response = ["subscribe", channel.decode()]
             if channel not in subscribe_dict:
                 subscribe_dict[channel] = set()
+            if conn not in subscriber_dict:
+                subscriber_dict[conn] = 0
+                
             if conn not in subscribe_dict[channel]:
-                response.append(1)
+                subscriber_dict[conn] += 1
+                response.append(subscriber_dict[conn])
                 subscribe_dict[channel].add(conn)
             else:
-                response.append(0)
+                response.append(subscriber_dict[conn])
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
