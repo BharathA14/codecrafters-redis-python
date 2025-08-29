@@ -134,7 +134,7 @@ def encode_resp(
             b"\r\n" if trailing_crlf else b"",
         )
     if isinstance(data, str):
-        if data[0] == "-": # Error Messages
+        if len(data) > 0 and data[0] == "-": # Error Messages
             return b"%b\r\n" % (data.encode(),)
         return b"+%b\r\n" % (data.encode(),)
     if isinstance(data, int):
@@ -274,7 +274,7 @@ def handle_command(
     match value:
         case [b"PING"]:
             if conn in subscriber_dict:
-                response = ["PONG",""]
+                response = [b'pong',b'']
             elif not is_replica_conn:
                 response = "PONG"
         case [b"ECHO", s]:
