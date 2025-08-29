@@ -667,6 +667,12 @@ master_repl_offset:{replication.master_repl_offset}
             else:
                 response.append(subscriber_dict[conn])
 
+        case [b"PUBLISH", channel, message]:
+            if channel in subscribe_dict:
+                response = len(subscribe_dict[channel])
+            else:
+                response = 0
+
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
 
