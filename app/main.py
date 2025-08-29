@@ -589,6 +589,20 @@ master_repl_offset:{replication.master_repl_offset}
             else:
                 response = 0
 
+        case [b"ZREM", zset_key, zset_member]:
+            if zset_key in sorted_set_dict:
+                for i in range(len(sorted_set_dict[zset_key])):
+                    v, k = sorted_set_dict[zset_key][i]
+                    if k == zset_member:
+                        response = 1
+                        sorted_set_dict[zset_key].remove((v, k))
+                        heapq.heapify(sorted_set_dict[zset_key])
+                        break
+                else:
+                    response = 0
+            else:
+                response = None
+
         case [b"ZSCORE", zset_key, zset_member]:
             if zset_key in sorted_set_dict:
                 for i in range(len(sorted_set_dict[zset_key])):
