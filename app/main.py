@@ -589,6 +589,19 @@ master_repl_offset:{replication.master_repl_offset}
             else:
                 response = 0
 
+        case [b"ZSCORE", zset_key, zset_member]:
+            if zset_key in sorted_set_dict:
+                for i in range(len(sorted_set_dict[zset_key])):
+                    v, k = sorted_set_dict[zset_key][i]
+                    print(k, zset_member)
+                    if k == zset_member:
+                        print("found")
+                        print(v)
+                        response = str(v).encode()
+                        break
+            if response == "custom":
+                response = None
+
         case [b"ZADD", zset_key, value, zset_member]:
             if zset_key in sorted_set_dict:
                 member_found = False
