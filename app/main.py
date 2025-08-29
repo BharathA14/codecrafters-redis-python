@@ -22,6 +22,7 @@ xread_block_queue = {} # {key: [{'conn': conn, 'keys': keys, 'expiry': time, 'ev
 xread_lock = threading.Lock()
 processed_bytes = 0
 sorted_set_dict = {} # {key: [], ...}
+subscribe_dict = {} # {channel: [conn, ...]}
 
 @dataclasses.dataclass
 class Args:
@@ -253,7 +254,7 @@ def handle_command(
     is_replica_conn: bool = False,
     trailing_crlf: bool = True,
 ) -> bytes | str | None | List[Any]:
-    global transaction_enabled, transactions, sorted_set_dict
+    global transaction_enabled, transactions, sorted_set_dict, subscribe_dict
     response = "custom"
     print("handle_command", value, is_replica_conn)
     match value:
@@ -635,6 +636,16 @@ master_repl_offset:{replication.master_repl_offset}
                 heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), zset_member))
                 response = 1
             print(sorted_set_dict[zset_key])
+
+        case [b"SUBSCRIBE", channel]:
+            response = ["subscribe", channel.decode()]
+            if channel not in subscribe_dict:
+                subscribe_dict[channel] = set()
+            if conn not in subscribe_dict[channel]:
+                response.append(1)
+                subscribe_dict[channel].add(conn)
+            else:
+                response.append(0)
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
