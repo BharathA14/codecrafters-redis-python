@@ -7,7 +7,7 @@ import time
 from datetime import timedelta
 from typing import Any, Dict, Optional, List, Tuple
 
-from app import rdb_parser
+from app import encode_geo, rdb_parser
 from app.rdb_parser import XADDValue
 import heapq
 
@@ -646,9 +646,12 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"ZSCORE", zset_key, zset_member]:
             if zset_key in sorted_set_dict:
                 for i in range(len(sorted_set_dict[zset_key])):
-                    v, k = sorted_set_dict[zset_key][i]
+                    *v, k = sorted_set_dict[zset_key][i]
                     if k == zset_member:
-                        response = str(v).encode()
+                        if len(v) > 1: # it's a geo set
+                            response = str(encode_geo.encode(v[1], v[0])).encode()
+                        else:
+                            response = str(v).encode()
                         break
             if response == "custom":
                 response = None
