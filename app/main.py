@@ -316,6 +316,8 @@ master_repl_offset:{replication.master_repl_offset}
             conn.send(encode_resp(EMPTY_RDB, False))
             # conn.send(b'*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n')
             replication.connected_replicas.append(conn)
+        case [b"WAIT", replicas, timeout]:
+            response = 0
         case [b"DISCARD"]:
             if transaction_enabled[conn]:
                 transaction_enabled[conn] = False
