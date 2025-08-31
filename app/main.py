@@ -670,6 +670,8 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"PUBLISH", channel, message]:
             if channel in subscribe_dict:
                 response = len(subscribe_dict[channel])
+                for conn in subscribe_dict[channel]:
+                    conn.send(encode_resp([b"message", channel, message]))
             else:
                 response = 0
 
