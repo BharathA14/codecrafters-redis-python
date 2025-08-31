@@ -584,12 +584,6 @@ master_repl_offset:{replication.master_repl_offset}
                 if start_index > end_index:
                     response = []
                 else:
-                    # if start_index > len(values):
-                    #     response = []
-                    # if end_index > len(values):
-                    #     end_index = len(values)
-                    # else:
-                    #     end_index += 1
                     popped_elements, response = [], []
                     for i in range(0, end_index+1):
                         ele = heapq.heappop(sorted_set_dict[zset_key])
