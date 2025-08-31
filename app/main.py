@@ -308,7 +308,6 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"REPLCONF", b"capa", b"psync2"]:
             response = "OK"
         case [b"REPLCONF", b"GETACK", b"*"]:
-            print(processed_bytes, get_processed_bytes())
             response = [b'REPLCONF', b'ACK', str(get_processed_bytes()).encode()]
         case [b"REPLCONF", b"ACK", ack_value]:
             with replica_ack_lock:
@@ -325,7 +324,6 @@ master_repl_offset:{replication.master_repl_offset}
             # conn.send(b'*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n')
             replication.connected_replicas.append(conn)
         case [b"WAIT", min_replicas, timeout]:
-            print("prev_command", prev_command," ", type(prev_command))
             if prev_command != b"SET":
                 response = len(replication.connected_replicas)
             else:
@@ -551,7 +549,6 @@ master_repl_offset:{replication.master_repl_offset}
 
         case [b"XREAD", b"block", expiry_ms, b"streams", *key_and_sequence]:
             resp = handle_xread(key_and_sequence, blocking=True)
-            print(key_and_sequence)
             if resp and key_and_sequence[1].decode() != "$":
                 response = resp
             else:
@@ -605,7 +602,6 @@ master_repl_offset:{replication.master_repl_offset}
             else:
                 start_index, end_index = map(int, (start_index, end_index))
                 start_index, end_index = handle_neg_index(start_index, end_index, len(sorted_set_dict[zset_key]))
-                print("s, e index:",start_index," ", end_index)
 
                 if start_index > end_index:
                     response = []
@@ -644,10 +640,7 @@ master_repl_offset:{replication.master_repl_offset}
             if zset_key in sorted_set_dict:
                 for i in range(len(sorted_set_dict[zset_key])):
                     v, k = sorted_set_dict[zset_key][i]
-                    print(k, zset_member)
                     if k == zset_member:
-                        print("found")
-                        print(v)
                         response = str(v).encode()
                         break
             if response == "custom":
@@ -671,7 +664,6 @@ master_repl_offset:{replication.master_repl_offset}
                 sorted_set_dict[zset_key] = []
                 heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), zset_member))
                 response = 1
-            print(sorted_set_dict[zset_key])
 
         case [b"SUBSCRIBE", channel]:
             response = ["subscribe", channel.decode()]
@@ -718,7 +710,6 @@ def push_elements_to_sorted_set(popped_elements, sorted_set_dict, zset_key):
 def handle_xread(key_and_sequence, blocking=False):
     global db
     keys, values = extract_key_and_sequence(key_and_sequence)
-    print(f"keys: {keys}, values: {values}")
     response = []
     
     for key, value in zip(keys, values):
