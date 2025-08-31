@@ -674,6 +674,15 @@ master_repl_offset:{replication.master_repl_offset}
                     conn.send(encode_resp([b"message", channel, message]))
             else:
                 response = 0
+        
+        case [b"UNSUBSCRIBE", channel]:
+            if channel in subscribe_dict:
+                if conn in subscribe_dict[channel]:
+                    subscribe_dict[channel].remove(conn)
+                    subscriber_dict[conn] -= 1
+                    response = [b"unsubscribe", channel, 1]
+                else:
+                    response = [b"unsubscribe", channel, 0]
 
         case _:
             raise RuntimeError(f"Command not implemented: {value}")
