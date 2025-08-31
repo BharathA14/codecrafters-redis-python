@@ -24,6 +24,9 @@ processed_bytes = 0
 sorted_set_dict = {} # {key: [], ...}
 subscribe_dict = {} # {channel: [conn, ...]}
 subscriber_dict = {} # {conn: [channel, ...]}
+replica_ack_counter = 0
+replica_ack_lock = threading.Lock()
+prev_command = ""
 subscriber_allowed_commands = [b"SUBSCRIBE", b"UNSUBSCRIBE", b"PUBLISH", b"PSUBSCRIBE", b"PUNSUBSCRIBE", b"PING", b"QUIT"]
 
 @dataclasses.dataclass
@@ -169,7 +172,7 @@ replication = Replication(
 
 def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
     data = b""
-    global transaction_enabled, transactions, processed_bytes
+    global transaction_enabled, transactions, processed_bytes, prev_command
 
     while data or (data := conn.recv(65536)):
         # FIX: Does not differentiate between separate client and master connection
@@ -185,6 +188,7 @@ def handle_conn(args: Args, conn: socket.socket, is_replica_conn: bool = False):
                 transactions[conn] = []
             print("handle_conn, command: ", value)
             response = handle_command(args, value, conn, is_replica_conn, trailing_crlf)
+            prev_command = value[0]
 
             if not transaction_enabled[conn] and response !="custom":
                 encoded_resp = encode_resp(response, trailing_crlf)
@@ -263,7 +267,7 @@ def handle_command(
     is_replica_conn: bool = False,
     trailing_crlf: bool = True,
 ) -> bytes | str | None | List[Any]:
-    global transaction_enabled, transactions, sorted_set_dict, subscribe_dict, subscriber_dict
+    global transaction_enabled, transactions, sorted_set_dict, subscribe_dict, subscriber_dict, replica_ack_counter, replica_ack_lock
     response = "custom"
     print("handle_command", value, is_replica_conn)
 
@@ -306,6 +310,10 @@ master_repl_offset:{replication.master_repl_offset}
         case [b"REPLCONF", b"GETACK", b"*"]:
             print(processed_bytes, get_processed_bytes())
             response = [b'REPLCONF', b'ACK', str(get_processed_bytes()).encode()]
+        case [b"REPLCONF", b"ACK", ack_value]:
+            with replica_ack_lock:
+                replica_ack_counter += 1
+            response = "custom"
         case [b"PSYNC", replid, offset]:
             response = "custom"
             conn.send (encode_resp(
@@ -316,8 +324,24 @@ master_repl_offset:{replication.master_repl_offset}
             conn.send(encode_resp(EMPTY_RDB, False))
             # conn.send(b'*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n')
             replication.connected_replicas.append(conn)
-        case [b"WAIT", replicas, timeout]:
-            return(len(replication.connected_replicas))
+        case [b"WAIT", min_replicas, timeout]:
+            print("prev_command", prev_command," ", type(prev_command))
+            if prev_command != b"SET":
+                response = len(replication.connected_replicas)
+            else:
+                min_replicas = int(min_replicas.decode())
+                timeout_ms = int(timeout.decode())
+                
+                for replica_conn in replication.connected_replicas:
+                    replica_conn.send(encode_resp([b"REPLCONF", b"GETACK", b"*"]))
+                
+                time.sleep(timeout_ms / 1000)
+                
+                with replica_ack_lock:
+                    ack_count = replica_ack_counter
+                    replica_ack_counter = 0
+                
+                response = ack_count
         case [b"DISCARD"]:
             if transaction_enabled[conn]:
                 transaction_enabled[conn] = False
