@@ -36,6 +36,10 @@ class Args:
     dir: str
     dbfilename: str
 
+@dataclasses.dataclass
+class NullArray:
+    type: Optional[str]
+
 
 def parse_single(data: bytes):
     """Parse a single RESP command from data"""
@@ -149,6 +153,8 @@ def encode_resp(
             str(len(data)).encode(),
             b"".join(map(encode_resp, data)),
         )
+    if isinstance(data, NullArray):
+        return b"*-1\r\n"
 
     raise RuntimeError(f"Encode not implemented: {data}, {type(data)}")
 
@@ -664,6 +670,20 @@ master_repl_offset:{replication.master_repl_offset}
                 response = f"-ERR invalid longitude,latitude pair {longitude.decode()},{latitude.decode()}"
             else:
                 response = add_to_sorted_set(geo_key, longitude, member, is_geo=True, latitude=latitude)
+
+        case [b"GEOPOS", geo_key, *members]:
+            if geo_key in sorted_set_dict:
+                response = []
+                for member in members:
+                    for i in range(len(sorted_set_dict[geo_key])):
+                        *v, k = sorted_set_dict[geo_key][i]
+                        if k == member:
+                            response.append([str(v[0]).encode(), str(v[1]).encode()])
+                            break
+                    else:
+                        response.append(NullArray(type=None))
+            else:
+                response = [NullArray(type=None) for _ in members]
 
         case [b"SUBSCRIBE", channel]:
             response = ["subscribe", channel.decode()]
