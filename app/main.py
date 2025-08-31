@@ -260,6 +260,13 @@ def handle_subscriber_command(value: List, conn: socket.socket):
             response = f"-ERR Can't execute '{value[0].decode()}' in subscribed mode"
     return response
 
+def validate_latitude_longitude(latitude: str, longitude: str) -> bool:
+    if float(latitude) > 85.05112878 or float(latitude) < -85.05112878:
+        return False
+    if float(longitude) > 180 or float(longitude) < -180:
+        return False
+    return True
+
 def handle_command(
     args: Args,
     value: List,
@@ -664,6 +671,28 @@ master_repl_offset:{replication.master_repl_offset}
                 sorted_set_dict[zset_key] = []
                 heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), zset_member))
                 response = 1
+        
+        case [b"GEOADD", zset_key, longitude, latitude, member]:
+            if not validate_latitude_longitude(latitude.decode(), longitude.decode()):
+                response = f"-ERR invalid longitude,latitude pair {longitude.decode()},{latitude.decode()}"
+            else:
+                if zset_key in sorted_set_dict:
+                    member_found = False
+                    for i in range(len(sorted_set_dict[zset_key])):
+                        v, k = sorted_set_dict[zset_key][i]
+                        if k == member:
+                            response = 0
+                            sorted_set_dict[zset_key][i] = (float(longitude.decode()), float(latitude.decode()), member)
+                            heapq.heapify(sorted_set_dict[zset_key])
+                            member_found = True
+                            break
+                    if not member_found:
+                        heapq.heappush(sorted_set_dict[zset_key], (float(longitude.decode()), float(latitude.decode()), member))
+                        response = 1
+                else:
+                    sorted_set_dict[zset_key] = []
+                    heapq.heappush(sorted_set_dict[zset_key], (float(longitude.decode()), float(latitude.decode()), member))
+                    response = 1
 
         case [b"SUBSCRIBE", channel]:
             response = ["subscribe", channel.decode()]
