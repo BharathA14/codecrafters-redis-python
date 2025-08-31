@@ -618,7 +618,7 @@ master_repl_offset:{replication.master_repl_offset}
                         ele = heapq.heappop(sorted_set_dict[zset_key])
                         popped_elements.append(ele)
                         if i >= start_index:
-                            response.append(ele[1])
+                            response.append(ele[-1])
                     push_elements_to_sorted_set(
                         popped_elements, sorted_set_dict, zset_key
                     )
@@ -654,45 +654,13 @@ master_repl_offset:{replication.master_repl_offset}
                 response = None
 
         case [b"ZADD", zset_key, value, zset_member]:
-            if zset_key in sorted_set_dict:
-                member_found = False
-                for i in range(len(sorted_set_dict[zset_key])):
-                    v, k = sorted_set_dict[zset_key][i]
-                    if k == zset_member:
-                        response = 0
-                        sorted_set_dict[zset_key][i] = (float(value.decode()), zset_member)
-                        heapq.heapify(sorted_set_dict[zset_key])
-                        member_found = True
-                        break
-                if not member_found:
-                    heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), zset_member))
-                    response = 1
-            else:
-                sorted_set_dict[zset_key] = []
-                heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), zset_member))
-                response = 1
-        
-        case [b"GEOADD", zset_key, longitude, latitude, member]:
+            response = add_to_sorted_set(zset_key, value, zset_member, is_geo=False)
+
+        case [b"GEOADD", geo_key, longitude, latitude, member]:
             if not validate_latitude_longitude(latitude.decode(), longitude.decode()):
                 response = f"-ERR invalid longitude,latitude pair {longitude.decode()},{latitude.decode()}"
             else:
-                if zset_key in sorted_set_dict:
-                    member_found = False
-                    for i in range(len(sorted_set_dict[zset_key])):
-                        v, k = sorted_set_dict[zset_key][i]
-                        if k == member:
-                            response = 0
-                            sorted_set_dict[zset_key][i] = (float(longitude.decode()), float(latitude.decode()), member)
-                            heapq.heapify(sorted_set_dict[zset_key])
-                            member_found = True
-                            break
-                    if not member_found:
-                        heapq.heappush(sorted_set_dict[zset_key], (float(longitude.decode()), float(latitude.decode()), member))
-                        response = 1
-                else:
-                    sorted_set_dict[zset_key] = []
-                    heapq.heappush(sorted_set_dict[zset_key], (float(longitude.decode()), float(latitude.decode()), member))
-                    response = 1
+                response = add_to_sorted_set(geo_key, longitude, member, is_geo=True, latitude=latitude)
 
         case [b"SUBSCRIBE", channel]:
             response = ["subscribe", channel.decode()]
@@ -878,6 +846,38 @@ def handle_transaction(args: Args, conn: socket.socket, is_replica_conn: bool):
     response = []
     for transaction in transactions[conn]:
         response.append(handle_command(args, transaction, conn, is_replica_conn))
+    return response
+
+def add_to_sorted_set(zset_key: bytes, value: bytes, member: bytes, is_geo: bool = False, latitude: bytes = None):
+    global sorted_set_dict
+    
+    if zset_key in sorted_set_dict:
+        member_found = False
+        for i in range(len(sorted_set_dict[zset_key])):
+            *v, k = sorted_set_dict[zset_key][i]
+            if k == member:
+                response = 0
+                if is_geo:
+                    sorted_set_dict[zset_key][i] = (float(value.decode()), float(latitude.decode()), member)
+                else:
+                    sorted_set_dict[zset_key][i] = (float(value.decode()), member)
+                heapq.heapify(sorted_set_dict[zset_key])
+                member_found = True
+                break
+        if not member_found:
+            if is_geo:  
+                heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), float(latitude.decode()), member))
+            else:
+                heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), member))
+            response = 1
+    else:
+        sorted_set_dict[zset_key] = []
+        if is_geo:
+            heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), float(latitude.decode()), member))
+        else:
+            heapq.heappush(sorted_set_dict[zset_key], (float(value.decode()), member))
+        response = 1
+    
     return response
 
 
