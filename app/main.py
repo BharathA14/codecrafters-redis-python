@@ -8,6 +8,8 @@ from datetime import timedelta
 from typing import Any, Dict, Optional, List, Tuple
 
 from app import encode_geo, rdb_parser
+from app import decode_geo
+from app.decode_geo import decode
 from app.rdb_parser import XADDValue
 import heapq
 
@@ -678,12 +680,20 @@ master_repl_offset:{replication.master_repl_offset}
                     for i in range(len(sorted_set_dict[geo_key])):
                         *v, k = sorted_set_dict[geo_key][i]
                         if k == member:
-                            response.append([str(v[0]).encode(), str(v[1]).encode()])
-                            break
+                            if len(v) > 1:
+                                response.append([str(v[1]).encode(), str(v[0]).encode()])
+                                break
+                            else:                                
+                                response.append(
+                                    [f"{x:.12f}".rstrip("0").rstrip(".").encode()
+                                     for x in decode_geo.decode(int(v[0]))]
+                                )
+                                break
                     else:
                         response.append(NullArray(type=None))
             else:
                 response = [NullArray(type=None) for _ in members]
+
 
         case [b"SUBSCRIBE", channel]:
             response = ["subscribe", channel.decode()]
