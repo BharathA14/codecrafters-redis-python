@@ -7,7 +7,7 @@ import time
 from datetime import timedelta
 from typing import Any, Dict, Optional, List, Tuple
 
-from app import encode_geo, rdb_parser
+from app import encode_geo, haversine, rdb_parser
 from app import decode_geo
 from app.decode_geo import decode
 from app.rdb_parser import XADDValue
@@ -652,16 +652,8 @@ master_repl_offset:{replication.master_repl_offset}
                 response = None
 
         case [b"ZSCORE", zset_key, zset_member]:
-            if zset_key in sorted_set_dict:
-                for i in range(len(sorted_set_dict[zset_key])):
-                    *v, k = sorted_set_dict[zset_key][i]
-                    if k == zset_member:
-                        if len(v) > 1: # it's a geo set
-                            response = str(encode_geo.encode(v[1], v[0])).encode()
-                        else:
-                            response = str(v).encode()
-                        break
-            if response == "custom":
+            response = calculate_zscore(sorted_set_dict, zset_key, zset_member)
+            if response == "":
                 response = None
 
         case [b"ZADD", zset_key, value, zset_member]:
@@ -693,6 +685,24 @@ master_repl_offset:{replication.master_repl_offset}
                         response.append(NullArray(type=None))
             else:
                 response = [NullArray(type=None) for _ in members]
+
+        case [b"GEODIST", geo_key, member1, member2]:
+            coord1, coord2 = [],[]
+            for i in range(len(sorted_set_dict[geo_key])):
+                *v, k = sorted_set_dict[geo_key][i]
+                if k == member1:
+                    coord1 = v
+                if k == member2:
+                    coord2 = v
+            #wierdly works when i encode and decode the data
+            score_coord1 = encode_geo.encode(coord1[1], coord1[0])
+            score_coord2 = encode_geo.encode(coord2[1], coord2[0])
+            coord1 = decode_geo.decode(int(score_coord1))
+            coord2 = decode_geo.decode(int(score_coord2))
+            response = haversine.haversine(coord1[1], coord1[0], coord2[1], coord2[0])
+            print(response, round(response, 4), f"{response:.4f}".rstrip("0").rstrip("."))
+            response = f"{round(response, 4)}".rstrip("0").rstrip(".").encode()
+            
 
 
         case [b"SUBSCRIBE", channel]:
@@ -736,6 +746,17 @@ def push_elements_to_sorted_set(popped_elements, sorted_set_dict, zset_key):
     for ele in popped_elements:
         heapq.heappush(sorted_set_dict[zset_key], ele)
 
+def calculate_zscore(sorted_set_dict, zset_key, zset_member):
+    response  = ""
+    if zset_key in sorted_set_dict:
+        for i in range(len(sorted_set_dict[zset_key])):
+            *v, k = sorted_set_dict[zset_key][i]
+            if k == zset_member:
+                if len(v) > 1:
+                    response = str(encode_geo.encode(v[1], v[0])).encode()
+                else:
+                    response = str(v).encode()
+    return response
 
 def handle_xread(key_and_sequence, blocking=False):
     global db
