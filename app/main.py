@@ -702,9 +702,16 @@ master_repl_offset:{replication.master_repl_offset}
             response = haversine.haversine(coord1[1], coord1[0], coord2[1], coord2[0])
             print(response, round(response, 4), f"{response:.4f}".rstrip("0").rstrip("."))
             response = f"{round(response, 4)}".rstrip("0").rstrip(".").encode()
+
+
+        case [b"GEOSEARCH", geo_key, b"FROMLONLAT", lat, lon, b"BYRADIUS", radius, b"m"]:
+            response = []
+            lat, lon, radius = float(lat.decode()), float(lon.decode()), float(radius.decode())
+            for member in sorted_set_dict[geo_key]:
+                *v, k = member
+                if haversine.haversine(v[1], v[0], lat, lon) <= radius:
+                    response.append(k)
             
-
-
         case [b"SUBSCRIBE", channel]:
             response = ["subscribe", channel.decode()]
             if channel not in subscribe_dict:
