@@ -709,7 +709,9 @@ master_repl_offset:{replication.master_repl_offset}
             lat, lon, radius = float(lat.decode()), float(lon.decode()), float(radius.decode())
             for member in sorted_set_dict[geo_key]:
                 *v, k = member
-                if haversine.haversine(v[1], v[0], lat, lon) <= radius:
+                score_coord1 = encode_geo.encode(v[1], v[0])
+                coord1 = decode_geo.decode(int(score_coord1))
+                if haversine.haversine(coord1[1], coord1[0], lat, lon) <= radius:
                     response.append(k)
             
         case [b"SUBSCRIBE", channel]:
